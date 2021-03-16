@@ -1,12 +1,22 @@
 # BigBird
 
+[WIP]
+
+## Introduction
+
 `BigBird` is the transformer based model which is relying on `block sparse attention` instead of normal attention (which can be found in `BERT`). It can handle sequence length `upto 4096` at a very low compute cost compared to `BERT` on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with longer contexts.
+
+<!-- ## Why long range attention -->
 
 ## Big Bird block sparse attention
 
 Paper suggested to do attention over `global tokens`, `sliding tokens`, & `random tokens` instead of doing it over complete sequence when sequence length is very large (>1024) as compute cost increase significantly in that case. Theoretically, compute complexity reduced to `n` from `n^2` this way. But practically, we need to use `gather` operation to combine all the keys (global + sliding + random) involved in block sparse attention matrix, which is very slow when using gpu/tpu.
 
 Hence, Authors hardcoded attention matrix and used a simple (but cool) trick to speed up training/inference process on gpu/tpu and reduced the need for relying on `gather` operation. Let's figure out more on that ...
+
+![ ](assets/block_sparse.png)
+
+Let's try to understand above diagram in next section..
 
 ### Global Attention
 
@@ -20,8 +30,6 @@ will be only `O(3xn)` or simpy `O(n)`. Refer below figure for the clear idea. Yo
 ### Random Attention
 
 Random attention is ensuring that each query token will attend few random tokens as well. Here we will have to rely upon `gather` operation :( during implementation.
-
-![ ](assets/block_sparse.png)
 
 Current implementation further divides sequence into blocks and computation is performed over each block of tokens instead of over single token for making the whole process more efficient on gpu/tpu.
 
@@ -41,14 +49,15 @@ ETC:
     sliding_tokens: 3 x block_size
 ```
 
-## Working with Hugging Face transformers
+## Using BigBird with Hugging Face transformers
+
+You can use `BigBird` just like any other model available in `HuggingFace`. Let's go into depth...
 
 ```python
 from transformers import BigBirdModel
 
 # loading bigbird from its pretrained checkpoint
 model = BigBirdModel.from_pretrained("google/bigbird-roberta-base")
-
 # This will init the model with default configuration i.e. attention_type = "block_sparse" num_random_blocks = 3, block_size = 64. 
 # But You can freely change these arguments with any checkpoint. These 3 argument will just change the number of tokens each query token is going to attend.
 model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", num_random_blocks=2, block_size=16)
@@ -58,6 +67,12 @@ model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", attention_ty
 ```
 
 There are total 3 checkpoints available in huggingface_hub (at the point of writing this article): `bigbird-roberta-base`, `bigbird-roberta-large`, `bigbird-base-trivia-itc`. First 2 checkpoints are the checkpoints made available after pretrained `BigBirdForPretraining` while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
+
+It's better to keep few points in mind while fine-tuning big bird:
+    -   Sequence length must be a multiple of block size i.e. `seqlen % block_size = 0`
+    -   Current implementation doesn't support `num_random_blocks=0`
+
+[@patrick](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
 
 ## End Notes
 
