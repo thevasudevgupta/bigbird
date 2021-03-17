@@ -1,37 +1,75 @@
 # BigBird
 
-[WIP]
+[WIP] Lemme finish this first ...
 
 ## Introduction
 
-`BigBird` is the transformer based model which is relying on `block sparse attention` instead of normal attention (which can be found in `BERT`). It can handle sequence length `upto 4096` at a very low compute cost compared to `BERT` on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with longer contexts.
+`BigBird` is the transformer based model which is relying on `block sparse attention` instead of normal attention (which can be found in BERT). It can handle sequence length `upto 4096` at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with longer contexts.
 
-<!-- ## Why long range attention -->
+## Why long range attention
+
+Tasks such as question-answering, summarization needs model to understand the global information to be able to perform nicely. 
+
+For instance, for question-answering model needs to capture information about question and part of context to be able to answer, which generates the need to attend question everytime it attends part of context. And then global attention comes into picture.
 
 ## Big Bird block sparse attention
 
-Paper suggested to do attention over `global tokens`, `sliding tokens`, & `random tokens` instead of doing it over complete sequence when sequence length is very large (>1024) as compute cost increase significantly in that case. Theoretically, compute complexity reduced to `n` from `n^2` this way. But practically, we need to use `gather` operation to combine all the keys (global + sliding + random) involved in block sparse attention matrix, which is very slow when using gpu/tpu.
+Paper suggested to do attention over `global tokens`, `sliding tokens`, & `random tokens` instead of doing it over complete sequence when sequence length is very large (>1024) as compute cost increase significantly in that case. Theoretically, compute complexity reduced to `n` from `n^2` this way.
 
-Hence, Authors hardcoded attention matrix and used a simple (but cool) trick to speed up training/inference process on gpu/tpu and reduced the need for relying on `gather` operation. Let's figure out more on that ...
+Authors hardcoded attention matrix and used a simple (but cool) trick to speed up training/inference process on gpu/tpu.
 
-![ ](assets/block_sparse.png)
+![BigBird block sparse attention](assets/block_sparse.png)
+*Note: on the top, we have 2 extra sentences. If you notice, every token is just switched by one place in both sentence. This is how sliding attention is implemented. When `q[i]` is multiplied with `k[i,0:3]`, we will get sliding attention score for q[i] (where `i` is index of element in sequence).*
 
-Let's try to understand above diagram in next section..
+Let's try to understand above diagram...
 
 ### Global Attention
 
-For global attention, each query is simply attending all the other tokens in sequence & is getting attended by every other token. `BigBird` implemented in `HuggingFace` is currently having 1st few tokens and last few tokens (depending on block size) as global tokens.
+For global attention, each query is simply attending all the other tokens in sequence & is getting attended by every other token. Checkout `blue` blocks in above figure.
+
+```python
+# 1st & last token attends all other tokens
+Q[0] x (K[0], K[1], K[2], ......, K[n])
+Q[1] x (K[0], K[1], K[2], ......, K[n])
+
+# 1st & last token getting attended by all other tokens
+K[0] x (Q[0], Q[1], Q[2], ......, Q[n])
+K[n] x (Q[0], Q[1], Q[2], ......, Q[n])
+```
 
 ### Sliding Attention
 
 Key sequence is copied 3 times with each element shifted to right in one of the copy & to the left in the other copy. Now if we multiply query sequence vectors by these 3 sequences vectors, we will cover all the sliding tokens. Compute capacity of that
 will be only `O(3xn)` or simpy `O(n)`. Refer below figure for the clear idea. You can clearly see 3 sequences in the top of figure with 2 of them switched by one token.
 
+```python
+# what we want to do
+Q[i] x (K[i-1], K[i], K[i+1])
+
+# efficient implementation in code (assume element-wise multiplication 👇)
+(Q[0], Q[1], Q[2], ......, Q[n-1], Q[n]) x (K[1], K[2], K[3], ......, K[n], K[0])
+(Q[0], Q[1], Q[2], ......, Q[n]) x (K[n], K[1], K[2], ......, K[n-1])
+(Q[0], Q[1], Q[2], ......, Q[n]) x (K[0], K[1], K[2], ......, K[n])
+```
+
+Note: Now, each sequence is getting mutiplied by only 3 sequences to keep `window_size = 3` and we are able to reduce the time complexity.
+
 ### Random Attention
 
-Random attention is ensuring that each query token will attend few random tokens as well. Here we will have to rely upon `gather` operation :( during implementation.
+Random attention is ensuring that each query token will attend few random tokens as well.
 
-Current implementation further divides sequence into blocks and computation is performed over each block of tokens instead of over single token for making the whole process more efficient on gpu/tpu.
+```python
+# r1, r2, r are some random indices ; not r1, r2, r3 are different for each row
+Q[0] x (Q[r1], Q[r2], ......, Q[r])
+Q[1] x (Q[r1], Q[r2], ......, Q[r])
+.
+.
+.
+Q[n] x (Q[r1], Q[r2], ......, Q[r])
+```
+
+**Note:** Current implementation further divides sequence into blocks and computation is performed over each block of tokens instead of over single token for making the whole process more efficient on gpu/tpu.
+Hence, `BigBird` implemented in `HuggingFace` is currently having 1st few tokens & last few tokens (depending on block size) as global tokens.
 
 ## ITC vs ETC
 
@@ -48,6 +86,8 @@ ETC:
     random_tokens: num_random_blocks x block_size
     sliding_tokens: 3 x block_size
 ```
+
+<!-- ### How it is differernt from Longformer attention -->
 
 ## Using BigBird with Hugging Face transformers
 
@@ -68,11 +108,12 @@ model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", attention_ty
 
 There are total 3 checkpoints available in huggingface_hub (at the point of writing this article): `bigbird-roberta-base`, `bigbird-roberta-large`, `bigbird-base-trivia-itc`. First 2 checkpoints are the checkpoints made available after pretrained `BigBirdForPretraining` while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
 
-It's better to keep few points in mind while fine-tuning big bird:
-    -   Sequence length must be a multiple of block size i.e. `seqlen % block_size = 0`
-    -   Current implementation doesn't support `num_random_blocks=0`
+It's better to keep few points in mind while working with big bird:
 
-[@patrick](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
+* Sequence length must be a multiple of block size i.e. `seqlen % block_size = 0`
+* Current implementation doesn't support `num_random_blocks = 0`
+
+[@patrickvonplaten](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
 
 ## End Notes
 
