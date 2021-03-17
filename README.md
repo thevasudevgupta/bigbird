@@ -52,14 +52,14 @@ Q[i] x (K[i-1], K[i], K[i+1])
 (Q[0], Q[1], Q[2], ......, Q[n]) x (K[0], K[1], K[2], ......, K[n])
 ```
 
-Note: Now, each sequence is getting mutiplied by only 3 sequences to keep `window_size = 3` and we are able to reduce the time complexity.
+**Note:** Now, each sequence is getting mutiplied by only 3 sequences to keep `window_size = 3` and we are able to reduce the time complexity.
 
 ### Random Attention
 
 Random attention is ensuring that each query token will attend few random tokens as well.
 
 ```python
-# r1, r2, r are some random indices ; not r1, r2, r3 are different for each row
+# r1, r2, r are some random indices; Note: r1, r2, r3 are different for each row 👇
 Q[0] x (Q[r1], Q[r2], ......, Q[r])
 Q[1] x (Q[r1], Q[r2], ......, Q[r])
 .
@@ -75,30 +75,24 @@ Hence, `BigBird` implemented in `HuggingFace` is currently having 1st few tokens
 
 Further, BigBird model is pretrained using 2 different strategies: `ITC` & `ETC`. `ITC` is simply what we discussed above. While in `ETC`, some more tokens are made global such that they will attend / will get attented by all tokens. Paper claimed that this can lead to increase in performance on several tasks.
 
-```md
-ITC:
-    global_tokens: 2 x block_size (1st & last block)
-    random_tokens: num_random_blocks x block_size
-    sliding_tokens: 3 x block_size
-
-ETC:
-    global_tokens: extra_tokens + 2 x block_size (1st & last block)
-    random_tokens: num_random_blocks x block_size
-    sliding_tokens: 3 x block_size
-```
+|                   | ITC                                   | ETC                                   |
+|-------------------|---------------------------------------|---------------------------------------|
+| `global_tokens`   | 2 x `block_size`                      | `extra_tokens` + 2 x `block_size`     |
+| random_tokens     | `num_random_blocks` x `block_size`    | `num_random_blocks` x `block_size`    |
+| sliding_tokens    | 3 x `block_size`                      | 3 x `block_size`                      |
 
 <!-- ### How it is differernt from Longformer attention -->
 
 ## Using BigBird with Hugging Face transformers
 
-You can use `BigBird` just like any other model available in `HuggingFace`. Let's go into depth...
+You can use `BigBird` just like any other model available in `HuggingFace`. Let's see how...
 
 ```python
 from transformers import BigBirdModel
 
 # loading bigbird from its pretrained checkpoint
 model = BigBirdModel.from_pretrained("google/bigbird-roberta-base")
-# This will init the model with default configuration i.e. attention_type = "block_sparse" num_random_blocks = 3, block_size = 64. 
+# This will init the model with default configuration i.e. attention_type = "block_sparse" num_random_blocks = 3, block_size = 64.
 # But You can freely change these arguments with any checkpoint. These 3 argument will just change the number of tokens each query token is going to attend.
 model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", num_random_blocks=2, block_size=16)
 
@@ -106,14 +100,19 @@ model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", num_random_b
 model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", attention_type="original_full")
 ```
 
-There are total 3 checkpoints available in huggingface_hub (at the point of writing this article): `bigbird-roberta-base`, `bigbird-roberta-large`, `bigbird-base-trivia-itc`. First 2 checkpoints are the checkpoints made available after pretrained `BigBirdForPretraining` while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
+There are total 3 checkpoints available in huggingface_hub (at the point of writing this article): [`bigbird-roberta-base`](https://huggingface.co/google/bigbird-roberta-base), [`bigbird-roberta-large`](https://huggingface.co/google/bigbird-roberta-large), [`bigbird-base-trivia-itc`](https://huggingface.co/google/bigbird-base-trivia-itc). First 2 checkpoints comes from pretraining `BigBirdForPretraining` with `masked_lm loss`; while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
 
-It's better to keep few points in mind while working with big bird:
+It's better to keep following points in mind while working with big bird:
 
 * Sequence length must be a multiple of block size i.e. `seqlen % block_size = 0`
 * Current implementation doesn't support `num_random_blocks = 0`
+* Currently, `HuggingFace` version doesn't support `ETC` and hence only 1st & last block will be global.
+
+## What's next ?
 
 [@patrickvonplaten](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
+
+You will soon see `BigBirdPegasus` in the library and will be able to do `long documents summarization`💥 easily.
 
 ## End Notes
 
