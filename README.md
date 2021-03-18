@@ -1,12 +1,14 @@
-# BigBird
+# <p align=center>`BigBird`</p>
 
 [WIP] Lemme finish this first ...
 
 ## Introduction
 
-`BigBird` is the transformer based model which is relying on `block sparse attention` instead of normal attention (which can be found in BERT). It can handle sequence length `upto 4096` at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with longer contexts.
+**BigBird** (introduced in [paper](https://arxiv.org/abs/2007.14062)) is the transformer based model which is relying on **block sparse attention** instead of normal attention (which can be found in BERT). It can handle sequence length **upto 4096** at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with longer contexts.
 
 ## Why long range attention
+
+<!-- BERT compute on 4096 and bigbird compute on 4096 -->
 
 Tasks such as question-answering, summarization needs model to understand the global information to be able to perform nicely. 
 
@@ -14,23 +16,27 @@ For instance, for question-answering model needs to capture information about qu
 
 ## Big Bird block sparse attention
 
-Paper suggested to do attention over `global tokens`, `sliding tokens`, & `random tokens` instead of doing it over complete sequence when sequence length is very large (>1024) as compute cost increase significantly in that case. Theoretically, compute complexity reduced to `n` from `n^2` this way.
+Paper suggested to do attention over **global tokens**, **sliding tokens**, & **random tokens** instead of doing it over complete sequence when sequence length is very large (>1024) as compute cost increase significantly in that case. Theoretically, compute complexity reduced to `n` from `n^2` this way.
 
 Authors hardcoded attention matrix and used a simple (but cool) trick to speed up training/inference process on gpu/tpu.
 
 ![BigBird block sparse attention](assets/block_sparse.png)
 *Note: on the top, we have 2 extra sentences. If you notice, every token is just switched by one place in both sentence. This is how sliding attention is implemented. When `q[i]` is multiplied with `k[i,0:3]`, we will get sliding attention score for q[i] (where `i` is index of element in sequence).*
 
-Let's try to understand above diagram...
+You can find the implementation of `block_sparse` attention starting from [here](https://github.com/vasudevgupta7/transformers/blob/5f2d6a0c93ca2017961199aa04a344b9b779d454/src/transformers/models/big_bird/modeling_big_bird.py#L513). Have a look, this may look very scary 😨😨 now. But this article will surely ease your life in understanding the code.
 
 ### Global Attention
 
-For global attention, each query is simply attending all the other tokens in sequence & is getting attended by every other token. Checkout `blue` blocks in above figure.
+<!-- include actual code in hide and seek -->
+
+For global attention, each query is simply attending all the other tokens in sequence & is getting attended by every other token. Let's assume `Vasudev` (1st token) & `them` (last token) to be global. You can clearly see that these tokens are involved in all the attention computation (blue boxes).
 
 ```python
+# pseudo code
+
 # 1st & last token attends all other tokens
 Q[0] x (K[0], K[1], K[2], ......, K[n])
-Q[1] x (K[0], K[1], K[2], ......, K[n])
+Q[n] x (K[0], K[1], K[2], ......, K[n])
 
 # 1st & last token getting attended by all other tokens
 K[0] x (Q[0], Q[1], Q[2], ......, Q[n])
@@ -68,24 +74,70 @@ Q[1] x (Q[r1], Q[r2], ......, Q[r])
 Q[n] x (Q[r1], Q[r2], ......, Q[r])
 ```
 
-**Note:** Current implementation further divides sequence into blocks and computation is performed over each block of tokens instead of over single token for making the whole process more efficient on gpu/tpu.
-Hence, `BigBird` implemented in `HuggingFace` is currently having 1st few tokens & last few tokens (depending on block size) as global tokens.
+<!-- **Note:** Current implementation further divides sequence into blocks and computation is performed over each block of tokens instead of over single token for making the whole process more efficient on gpu/tpu. -->
+Hence, BigBird implemented in HuggingFace is currently having 1st few tokens & last few tokens (depending on block size) as global tokens.
+
+## Time complexity
+
+| Attention Type  | Sequence length | Time Complexity |
+|-----------------|-----------------|-----------------|
+| `original_full` | 512             | `O(n^2)`        |
+|                 | 1024            | 4 x `O(n^2)`    |
+|                 | 4096            | 64 x `O(n^2)`   |
+| `block_sparse`  | 1024            | 2 x `O(n^2)`    |
+|                 | 4096            | 8 x `O(n^2)`    |
+
+<details>
+
+<summary>Expand this snippet in case you wanna see the calculations</summary>
+
+```md
+BigBird time complexity = O(w x n + r x n + g x n)
+BERT time complexity = O(n^2)
+
+Assumptions:
+    w = 3 x 64
+    r = 3 x 64
+    g = 2 x 64
+
+When seqlen = 512
+=> **time complexity in BERT = 512^2**
+
+When seqlen = 1024
+=> time complexity in BERT = (2 x 512)^2
+=> **time complexity in BERT = 4 x 512^2**
+
+=> time complexity in BigBird = (8 x 64) x (2 x 512)
+=> **time complexity in BigBird = 2 x 512^2**
+
+When seqlen = 4096
+=> time complexity in BERT = (8 x 512)^2
+=> **time complexity in BERT = 64 x 512^2**
+
+=> compute in BigBird = (8 x 64) x (8 x 512)
+=> compute in BigBird = 8 x (512 x 512)
+=> **time complexity in BigBird = 8 x 512^2**
+```
+
+</details>
 
 ## ITC vs ETC
 
-Further, BigBird model is pretrained using 2 different strategies: `ITC` & `ETC`. `ITC` is simply what we discussed above. While in `ETC`, some more tokens are made global such that they will attend / will get attented by all tokens. Paper claimed that this can lead to increase in performance on several tasks.
+BigBird model is finetuned using 2 different strategies: **ITC** & **ETC**. ITC (internal transformer construction) is simply what we discussed above. While in ETC (extended transformer construction), some extra tokens are made global such that they will attend / will get attented by all tokens.
 
 |                   | ITC                                   | ETC                                   |
 |-------------------|---------------------------------------|---------------------------------------|
+| Attention Matrix  |<a href="https://www.codecogs.com/eqnedit.php?latex=A&space;=&space;\begin{bmatrix}&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\end{bmatrix}" target="_blank"><img src="https://latex.codecogs.com/gif.latex?A&space;=&space;\begin{bmatrix}&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\end{bmatrix}" title="A = \begin{bmatrix} 1 & 1 & 1 & 1 & 1 & 1 & 1 \\ 1 & & & & & & 1 \\ 1 & & & & & & 1 \\ 1 & & & & & & 1 \\ 1 & & & & & & 1 \\ 1 & & & & & & 1 \\ 1 & 1 & 1 & 1 & 1 & 1 & 1 \end{bmatrix}" /></a> | <a href="https://www.codecogs.com/eqnedit.php?latex=B&space;=&space;\begin{bmatrix}&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\end{bmatrix}" target="_blank"><img src="https://latex.codecogs.com/gif.latex?B&space;=&space;\begin{bmatrix}&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;&&space;&&space;&&space;&&space;&&space;1&space;\\&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;&&space;1&space;\end{bmatrix}" title="B = \begin{bmatrix} 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\ 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\ 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\ 1 & 1 & 1 & & & & & & 1 \\ 1 & 1 & 1 & & & & & & 1 \\ 1 & 1 & 1 & & & & & & 1 \\ 1 & 1 & 1 & & & & & & 1 \\ 1 & 1 & 1 & & & & & & 1 \\ 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \end{bmatrix}" /></a> |
 | `global_tokens`   | 2 x `block_size`                      | `extra_tokens` + 2 x `block_size`     |
-| random_tokens     | `num_random_blocks` x `block_size`    | `num_random_blocks` x `block_size`    |
-| sliding_tokens    | 3 x `block_size`                      | 3 x `block_size`                      |
+| `random_tokens`   | `num_random_blocks` x `block_size`    | `num_random_blocks` x `block_size`    |
+| `sliding_tokens`  | 3 x `block_size`                      | 3 x `block_size`                      |
+| Benefits          | Lesser compute                        | Performs better on tasks that needs more global tokens such as `question-answering` (complete question is required to query over the context) |
 
 <!-- ### How it is differernt from Longformer attention -->
 
 ## Using BigBird with Hugging Face transformers
 
-You can use `BigBird` just like any other model available in `HuggingFace`. Let's see how...
+You can use BigBird just like any other model available in HuggingFace. Let's see how...
 
 ```python
 from transformers import BigBirdModel
@@ -102,20 +154,21 @@ model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", attention_ty
 
 There are total 3 checkpoints available in huggingface_hub (at the point of writing this article): [`bigbird-roberta-base`](https://huggingface.co/google/bigbird-roberta-base), [`bigbird-roberta-large`](https://huggingface.co/google/bigbird-roberta-large), [`bigbird-base-trivia-itc`](https://huggingface.co/google/bigbird-base-trivia-itc). First 2 checkpoints comes from pretraining `BigBirdForPretraining` with `masked_lm loss`; while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
 
-It's better to keep following points in mind while working with big bird:
+It's important to keep following points in mind while working with big bird:
 
 * Sequence length must be a multiple of block size i.e. `seqlen % block_size = 0`
 * Current implementation doesn't support `num_random_blocks = 0`
-* Currently, `HuggingFace` version doesn't support `ETC` and hence only 1st & last block will be global.
+* Currently, HuggingFace version **doesn't support ETC** and hence only 1st & last block will be global.
+* When using big bird as decoder (or using `BigBirdForCasualLM`), `attention_type` should be `original_full`. But you need not worry, 🤗 implementation will automatically switch `attention_type` to `original_full` incase you forget to do that.
 
-## What's next ?
+## What's next?
 
 [@patrickvonplaten](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
 
-You will soon see `BigBirdPegasus` in the library and will be able to do `long documents summarization`💥 easily.
+You will soon see `BigBirdPegasus` in the library and will be able to do **long documents summarization**💥 easily.
 
 ## End Notes
 
-Original implementation of block sparse attention matrix can be found [here](https://github.com/google-research/bigbird/blob/master/bigbird/core/attention.py). You can find `HuggingFace` version [here](https://github.com/huggingface/transformers/pull/10183).
+Original implementation of **block sparse attention matrix** can be found [here](https://github.com/google-research/bigbird/blob/master/bigbird/core/attention.py). You can find **HuggingFace** version [here](https://github.com/huggingface/transformers/pull/10183).
 
 **Feel free to raise an issue, incase you found something wrong here. Star 🌟 this repo if you found this helpful.**
