@@ -1,14 +1,16 @@
-# <p align=center>`BigBird`</p>
-
+# <p align=center>`Big Bird`</p>
+ 
 [WIP] Lemme finish this first ...
 
 ## Introduction
 
-**BigBird** (introduced in [paper](https://arxiv.org/abs/2007.14062)) is the transformer based model which is relying on **block sparse attention** instead of normal attention (which can be found in BERT). It can handle sequence length **upto 4096** at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with longer contexts.
+**BigBird** (introduced in [paper](https://arxiv.org/abs/2007.14062)) is the transformer based model which is relying on **block sparse attention** instead of normal attention (which can be found in BERT). It can handle sequence length **upto 4096** at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with long contexts.
+
+Before going into depth of this article, remember that best results are obtained only with BERT like attention as compared to block sparse attention. But since BERT attention compute requirements scales significantly as sequence length increases, we need some kinda alternative which can approximate BERT attention and get equivalent results at less compute. Other way to think is that if we have $\infty$ compute & $\infty$ time (practially not possible), then BERT attention is better than block sparse attention and will yeild better results.
+
+If you wonder that why we need more compute, (no issues!) we will cover that in later sections.
 
 ## Why long range attention
-
-<!-- BERT compute on 4096 and bigbird compute on 4096 -->
 
 Tasks such as question-answering, summarization needs model to understand the global information to be able to perform nicely. 
 
@@ -21,13 +23,11 @@ Paper suggested to do attention over **global tokens**, **sliding tokens**, & **
 Authors hardcoded attention matrix and used a simple (but cool) trick to speed up training/inference process on gpu/tpu.
 
 ![BigBird block sparse attention](assets/block_sparse.png)
-*Note: on the top, we have 2 extra sentences. If you notice, every token is just switched by one place in both sentence. This is how sliding attention is implemented. When `q[i]` is multiplied with `k[i,0:3]`, we will get sliding attention score for q[i] (where `i` is index of element in sequence).*
+*Note: on the top, we have 2 extra sentences. If you notice, every token is just switched by one place in both sentence. This is how sliding attention is implemented. When `q[i]` is multiplied with `k[i,0:3]`, we will get sliding attention score for `q[i]` (where `i` is index of element in sequence).*
 
 You can find the implementation of `block_sparse` attention starting from [here](https://github.com/vasudevgupta7/transformers/blob/5f2d6a0c93ca2017961199aa04a344b9b779d454/src/transformers/models/big_bird/modeling_big_bird.py#L513). Have a look, this may look very scary 😨😨 now. But this article will surely ease your life in understanding the code.
 
 ### Global Attention
-
-<!-- include actual code in hide and seek -->
 
 For global attention, each query is simply attending all the other tokens in sequence & is getting attended by every other token. Let's assume `Vasudev` (1st token) & `them` (last token) to be global. You can clearly see that these tokens are involved in all the attention computation (blue boxes).
 
@@ -76,6 +76,29 @@ Q[n] x (Q[r1], Q[r2], ......, Q[r])
 
 <!-- **Note:** Current implementation further divides sequence into blocks and computation is performed over each block of tokens instead of over single token for making the whole process more efficient on gpu/tpu. -->
 Hence, BigBird implemented in HuggingFace is currently having 1st few tokens & last few tokens (depending on block size) as global tokens.
+
+### Graphical view
+
+<img src="assets/global.png" width=256 height=200> </img>
+<img src="assets/sliding.png" width=256 height=200> </img>
+<img src="assets/random.png" width=256 height=200> </img> <br>
+*Above figure shows `global`, `sliding` & `random` connections respectively with the help of graph, where each node corresponds to token and each line represents attention score. If no connection is made between 2 tokens, then attention score is assumed to be 0.*
+
+Now if we want to share information between two nodes (or tokens), we need to travel across various nodes in the path. Since all the nodes are not connected in a single layer, we may need multiple layers to capture the information which normal attention is capturing in a single layer.
+
+In case of normal attention, all 81 connections would have been present in above figure & it would be easy for model can transfer information from one token to other in a single layer.
+
+| Attention Type  | `global_blocks`   | `sliding_blocks` | `random_blocks`     |
+|-----------------|-------------------|------------------|---------------------|
+| `original_full` | `n // block_size` | 0                | 0                   |
+| `block_sparse`  | 2                 | 3                | `num_random_blocks` |
+
+In normal attention, each token is queried over every other token and information is flowed among all the tokens in a single layer.
+While in block sparse attention, single layer won't be able to capture complete sequence information since all tokens are not attending all other tokens (though global tokens is trying to do this).
+
+Note that since for most of the tasks we need to capture complete global information, block sparse attention may need more no of layers to be able to perform similar to normal attention. Now, this can introduce time complexity of O(n^2) if we need as many layers as sequence length. But BigBird paper claimed that if we have good number of global tokens/ random tokens, we can actually get equivalent results.
+
+Other way to think is that normal attention simply means all tokens are global.
 
 ## Time complexity
 
@@ -133,7 +156,11 @@ BigBird model is finetuned using 2 different strategies: **ITC** & **ETC**. ITC 
 | `sliding_tokens`  | 3 x `block_size`                      | 3 x `block_size`                      |
 | Benefits          | Lesser compute                        | Performs better on tasks that needs more global tokens such as `question-answering` (complete question is required to query over the context) |
 
-<!-- ### How it is differernt from Longformer attention -->
+## BigBird vs Longformer
+
+### Normal sparse vs Block sparse
+
+longformer
 
 ## Using BigBird with Hugging Face transformers
 
