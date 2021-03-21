@@ -4,59 +4,64 @@
 
 ## Introduction
 
-Transformers based models are proving very useful for most of the NLP tasks. Major limitation of transformers is `O(n^2)` time & memory complexity (where n is sequence length). Hence, it's hard to use transformers for very long sequences (generally > 512). Several recent papers tried to focus on this by approximating the full attention matrix. Some of these ideas include Longformer, performer, reformer, clustered attention. You can check the 🤗 recent blog [post](https://huggingface.co/blog/long-range-transformers) in case you are unfamilier with some of these models.
+Transformers based models are proving very useful for most of the NLP tasks. One of the major limitation of transformers is `O(n^2)` time & memory complexity (where n is sequence length). Hence, it's hard to use transformers for very long sequences (generally > 512). Several recent papers tried to focus on this by approximating the full attention matrix. Some of these ideas include `Longformer`, `Performer`, `Reformer`, `Clustered attention`. You can checkout 🤗 recent blog [post](https://huggingface.co/blog/long-range-transformers) in case you are unfamilier with some of these models.
 
-BigBird (introduced in [paper](https://arxiv.org/abs/2007.14062)) is one of the most recent model which is addressing this issue and extending the work of `longformer`. It is relying on **block sparse attention** instead of normal attention (which can be found in BERT). It can handle sequence length **upto 4096** at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences such as long documents summarization, question-answering with long contexts.
+`BigBird` (introduced in [paper](https://arxiv.org/abs/2007.14062)) is one of the recent model which is addressing this issue and extending the work of `longformer`. **It is relying on block sparse attention instead of normal attention (which can be found in BERT). It can handle sequence length upto 4096 at a very low compute cost compared to BERT on that long sequences.** It has achieved SOTA on various tasks involving very long sequences such as long documents summarization, question-answering with long contexts.
 
-Before going into depth of this article, remember that best results are obtained only with BERT like attention as compared to any other approximation of attention matrix. But since BERT attention compute & memory requirements scales quadratically as sequence length increases, we need some kinda alternative which can approximate BERT attention and get equivalent results at less compute. Other way to think is that if we have $\infty$ compute & $\infty$ time (practially not possible), then BERT attention is better than block sparse attention (which we are going to discuss in this post) and will yeild better results.
+Before going into depth of this article, remember that best results are obtained only with BERT like attention as compared to any other approximation of attention matrix. But since BERT attention compute & memory requirements scales quadratically as sequence length increases, we need some kinda alternative which can approximate BERT attention and get equivalent results at less compute. Other way to think is that if we have $\infty$ compute & $\infty$ time (practially not possible), then BERT attention is better than block sparse attention (which we are going to discuss in this post) and will yeild better results. So, its better to attend as many tokens as possible at reasonable compute & memory cost.
 
 If you wonder why we need more compute when working with longer sequences, (no worries!) just continue reading this post.
 
 ---
 
-Some of the main question when working with normal attention matrix are following:
+Some of the main question when working with normal attention matrix, are following:
 
 * Do all the tokens need to attend every other token or just few tokens?
-* Why not compute attention only over those tokens that are important?
+* Why not compute attention over only those tokens that are important?
 * How to decide what tokens are important?
 
 ---
 
-Keeping these questions in mind, we will try to proceed. But before that let's go over few other questions.
+We will try to look upon these questions and see how current research is trying to answer them. But before that let's go over few other questions.
 
-### Why long range attention
+### Let's build our attention matrix
+
+We will define a `set` and fill it up with the tokens which current query should attend based on some ideas & intuition.
 
 ```python
-# Let's consider a `set` and fill up the tokens of our interest which we should attend.
+# Let's consider a `set` and fill up the tokens of our interest which current query should attend.
 key_tokens = set()
 ```
 
-Nearby tokens are important obviously because in a sentence (sequence of words), current word is highly dependent on few future tokens & few past tokens. This idea introduced the concept of `sliding attention`.
+Nearby tokens are important obviously because in a sentence (sequence of words), current word is highly dependent on few future & past tokens. This idea introduced the concept of `sliding attention`.
 
 ```python
 # Let's update `set` with nearby tokens
+sliding_tokens = ["<something>", "....."]
 key_tokens.update(sliding_tokens)
 ```
 
-Long range relationships needs to be captured for lots of tasks. Eg: `question-answering` where model needs to capture information about entire question and most of context to be able to answer correctly.
+**Long range dependencies:** long range relationships needs to be captured for lots of tasks. Eg: `question-answering` where model needs to capture information about entire question and most of context to be able to answer correctly.
 
 there are 2 ways of doing this:
 
-* Introduce some tokens which will attend every token and gets attented by all the tokens. Eg: "HuggingFace is building nice libraries for easy NLP". Now, let's say 'building' is global token, then if we want to associate 'NLP' with 'HuggingFace'; 'building' representation will possibly help model to assiciate 'NLP' with 'HuggingFace'.
+* Introduce some tokens which will attend every token and gets attented by all the tokens. Eg: "HuggingFace is building nice libraries for easy NLP". Now, let's say 'building' is global token, and we want to associate 'NLP' with 'HuggingFace' for some task; Now 'building' representation will possibly help model to assiciate 'NLP' with 'HuggingFace' since both tokens will get associated by 'building'.
 
 ```python
 # fill up global tokens in our `set`
+global_tokens = ["<something>", "....."]
 key_tokens.update(global_tokens)
 ```
 
-* Introduce some random tokens which will transfer information by transfering to other tokens which in turn can transfer to other tokens. This will reduce the cost of information travel from one token to other. This is why `random` attention attention is introduced.
+* Introduce some random tokens which will transfer information by transfering to other tokens which in turn can transfer to other tokens. This may reduce the cost of information travel from one token to other. This is why `random` attention attention is introduced.
 
 ```python
 # Let's add random tokens to our `set`
+random_tokens = ["<something>", "....."]
 key_tokens.update(random_tokens)
 ```
 
-Now, we just need our token to attend this `set` & possibly it will represent all the tokens nicely. Similar thing we will do for all the queries.
+Now, we just need our token to attend this `set` & possibly it will represent all the tokens nicely. Similar thing we will do for all the queries & attention matrix can be completed. But remember whole point is to do it as efficiently (& fastly) as we can & this is when bigbird block sparse attention comes into picture.
 
 ### Understanding with Graphs
 
@@ -74,7 +79,7 @@ BigBird block sparse attention is simply combination of these 3 figures. While i
 | `original_full` | `n`               | 0                | 0                                  |
 | `block_sparse`  | 2 x `block_size`  | 3 x `block_size` | `num_random_blocks` x `block_size` |
 
-*`original_full` represents BERT attention while `block_sparse` represents BigBird attention*
+*`original_full` represents BERT attention while `block_sparse` represents BigBird attention. Wondering what is `block_size`? We will cover that in later sections. For now consider it to be 1.*
 
 **Normal attention:** Model can transfer information from one token to other directly in a single layer, since each token is queried over every other token and information can be flowed among all the tokens in a single layer.
 
@@ -82,9 +87,7 @@ BigBird block sparse attention is simply combination of these 3 figures. While i
 
 ## Big Bird block sparse attention
 
-Paper suggested to attend only few tokens namely, **global tokens**, **sliding tokens**, & **random tokens** instead of attending the complete sequence when sequence length is very large (typically > 1024) as compute cost increases significantly in that case. Theoretically, this way compute complexity gets reduced to `O(n)` from `O(n^2)`.
-
-Authors hardcoded attention matrix to compute attention over only  and used a cool trick to speed up training/inference process on gpu/tpu.
+BigBird block sparse attention is just very efficient implementation of what we discussed above. Each token is attending **global tokens**, **sliding tokens**, & **random tokens** instead of attending the complete sequence. Authors hardcoded the attention matrix for each component; and used a cool trick to speed up training/inference process on gpu/tpu. You can `sliding_attention` section.
 
 ![BigBird block sparse attention](assets/block_sparse.png)
 *Note: on the top, we have 2 extra sentences. If you notice, every token is just switched by one place in both sentence. This is how sliding attention is implemented. When `q[i]` is multiplied with `k[i,0:3]`, we will get sliding attention score for `q[i]` (where `i` is index of element in sequence).*
@@ -93,7 +96,7 @@ You can find the implementation of `block_sparse` attention starting from [here]
 
 ### Global Attention
 
-For global attention, each query is simply attending all the other tokens in sequence & is getting attended by every other token. Let's assume `Vasudev` (1st token) & `them` (last token) to be global. You can clearly see that these tokens are involved in all the attention computation (blue boxes).
+For global attention, each query is simply attending all the other tokens in the sequence & is getting attended by every other token. Let's assume `Vasudev` (1st token) & `them` (last token) to be global (in above figure). You can clearly see these tokens to be involved in all the attention computation (blue boxes).
 
 ```python
 # pseudo code
@@ -110,7 +113,7 @@ K[n-1] x (Q[0], Q[1], Q[2], ......, Q[n-1])
 ### Sliding Attention
 
 Key sequence is copied 3 times with each element shifted to right in one of the copy & to the left in the other copy. Now if we multiply query sequence vectors by these 3 sequences vectors, we will cover all the sliding tokens. Compute capacity of that
-will be only `O(3xn)` or simpy `O(n)`. Refer below figure for the clear idea. You can clearly see 3 sequences in the top of figure with 2 of them switched by one token.
+will be only `O(3xn)` or simpy `O(n)`. Refer above figure for the clear idea (green boxes represents tokens involved in sliding attention). You can clearly see 3 sequences in the top of figure with 2 of them switched by one token.
 
 ```python
 # what we want to do
@@ -120,13 +123,13 @@ Q[i] x (K[i-1], K[i], K[i+1])
 (Q[0], Q[1], Q[2], ......, Q[n-2], Q[n-1]) x (K[1], K[2], K[3], ......, K[n-1], K[0])
 (Q[0], Q[1], Q[2], ......, Q[n-1]) x (K[n-1], K[0], K[1], ......, K[n-2])
 (Q[0], Q[1], Q[2], ......, Q[n-1]) x (K[0], K[1], K[2], ......, K[n-1])
-```
 
-**Note:** Now, each sequence is getting mutiplied by only 3 sequences to keep `window_size = 3` and we are able to reduce the time complexity.
+# Each sequence is getting mutiplied by only 3 sequences to keep `window_size = 3`.
+```
 
 ### Random Attention
 
-Random attention is ensuring that each query token will attend few random tokens as well.
+Random attention is ensuring that each query token will attend few random tokens as well. So, in terms of implementation we are gathering some tokens randomly and computing attention score for each query.
 
 ```python
 # r1, r2, r are some random indices; Note: r1, r2, r3 are different for each row 👇
@@ -194,7 +197,7 @@ When seqlen = 4096
 
 BigBird model is finetuned using 2 different strategies: **ITC** & **ETC**. ITC (internal transformer construction) is simply what we discussed above. While in ETC (extended transformer construction), some extra tokens are made global such that they will attend / will get attented by all tokens.
 
-ITC requires less compute since very few tokens are globals & model can still capture global information with them. On the other hand, ETC can be very helpful for the tasks in which we need lot of global tokens such as `question-answering` in which entire question should be global, with some tokens of context to be able to understand context; `summarization` since model needs to understand the overall context of very long paragraph.
+ITC requires less compute since very few tokens are globals & model can still capture global information with them. On the other hand, ETC can be very helpful for the tasks in which we need lot of global tokens such as `question-answering` in which entire question should be global, with many tokens of context to be able to understand context; `summarization` since model needs to understand the overall context of very long paragraph.
 
 Below table tries to summarize ITC & ETC:
 
@@ -235,7 +238,7 @@ It's important to keep following points in mind while working with big bird:
 
 [@patrickvonplaten](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
 
-You will soon see `BigBirdPegasus` in the library and will be able to do **long documents summarization**💥 easily. Meanwhile, I created another [notebook](https://colab.research.google.com/github/vasudevgupta7/bigbird-intuition/blob/main/notebooks/bigbird_narrativeqa.ipynb) for you. In case you wanna know how to fine-tune bigbird roberta on abstractive question-answering, feel free to check it out.
+You will soon see `BigBirdPegasus` in the library and will be able to do **long documents summarization**💥 easily. Meanwhile, I created another [notebook](https://colab.research.google.com/github/vasudevgupta7/bigbird-intuition/blob/main/notebooks/bigbird_narrativeqa.ipynb) for you. Refer it, in case you wanna know how to fine-tune bigbird roberta on abstractive question-answering.
 
 ## End Notes
 
