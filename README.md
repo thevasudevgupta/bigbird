@@ -4,46 +4,81 @@
 
 ## Introduction
 
-Transformers based models are seen to be very useful for most of the NLP tasks. Major limitation of transformers is `O(n^2)` time complexity (where n is sequence length). Hence, it's hard to use transformers for very long sequences (generally > 512). Several recent papers tried to focus on this by approximating the full attention matrix. Some of these ideas include Longformer, performer, reformer, clustered attention. You can check the 🤗 recent blog [post](https://huggingface.co/blog/long-range-transformers) in case you are unfamilier with some of these models.
+Transformers based models are proving very useful for most of the NLP tasks. Major limitation of transformers is `O(n^2)` time & memory complexity (where n is sequence length). Hence, it's hard to use transformers for very long sequences (generally > 512). Several recent papers tried to focus on this by approximating the full attention matrix. Some of these ideas include Longformer, performer, reformer, clustered attention. You can check the 🤗 recent blog [post](https://huggingface.co/blog/long-range-transformers) in case you are unfamilier with some of these models.
 
-BigBird is one of the most recent paper which is addressing this issue and extending the work of `longformer`. BigBird (introduced in [paper](https://arxiv.org/abs/2007.14062)) is the transformer based model which is relying on **block sparse attention** instead of normal attention (which can be found in BERT). It can handle sequence length **upto 4096** at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences (typically > 1024) such as long documents summarization, question-answering with long contexts.
+BigBird (introduced in [paper](https://arxiv.org/abs/2007.14062)) is one of the most recent model which is addressing this issue and extending the work of `longformer`. It is relying on **block sparse attention** instead of normal attention (which can be found in BERT). It can handle sequence length **upto 4096** at a very low compute cost compared to BERT on that long sequences. It has achieved SOTA on various tasks involving very long sequences such as long documents summarization, question-answering with long contexts.
 
-Before going into depth of this article, remember that best results are obtained only with BERT like attention as compared to block sparse attention. But since BERT attention compute requirements scales significantly as sequence length increases, we need some kinda alternative which can approximate BERT attention and get equivalent results at less compute. Other way to think is that if we have $\infty$ compute & $\infty$ time (practially not possible), then BERT attention is better than block sparse attention and will yeild better results.
+Before going into depth of this article, remember that best results are obtained only with BERT like attention as compared to any other approximation of attention matrix. But since BERT attention compute & memory requirements scales quadratically as sequence length increases, we need some kinda alternative which can approximate BERT attention and get equivalent results at less compute. Other way to think is that if we have $\infty$ compute & $\infty$ time (practially not possible), then BERT attention is better than block sparse attention (which we are going to discuss in this post) and will yeild better results.
 
-If you wonder that why we need more compute, (no issues!) we will cover that in later sections.
+If you wonder why we need more compute when working with longer sequences, (no worries!) just continue reading this post.
+
+---
+
+Some of the main question when working with normal attention matrix are following:
+
+* Do all the tokens need to attend every other token or just few tokens?
+* Why not compute attention only over those tokens that are important?
+* How to decide what tokens are important?
+
+---
+
+Keeping these questions in mind, we will try to proceed. But before that let's go over few other questions.
 
 ### Why long range attention
 
-Tasks such as question-answering, summarization needs model to understand the global information to be able to perform nicely.
+```python
+# Let's consider a `set` and fill up the tokens of our interest which we should attend.
+key_tokens = set()
+```
 
-For instance, for question-answering model needs to capture information about question and part of context to be able to answer, which generates the need to attend question everytime it attends part of context. And then global attention comes into picture.
+Nearby tokens are important obviously because in a sentence (sequence of words), current word is highly dependent on few future tokens & few past tokens. This idea introduced the concept of `sliding attention`.
 
-## Why sparse attention
+```python
+# Let's update `set` with nearby tokens
+key_tokens.update(sliding_tokens)
+```
 
-Since transformers involves attention matrix after each layer & hence m
+Long range relationships needs to be captured for lots of tasks. Eg: `question-answering` where model needs to capture information about entire question and most of context to be able to answer correctly.
 
-### Graphical view
+there are 2 ways of doing this:
+
+* Introduce some tokens which will attend every token and gets attented by all the tokens. Eg: "HuggingFace is building nice libraries for easy NLP". Now, let's say 'building' is global token, then if we want to associate 'NLP' with 'HuggingFace'; 'building' representation will possibly help model to assiciate 'NLP' with 'HuggingFace'.
+
+```python
+# fill up global tokens in our `set`
+key_tokens.update(global_tokens)
+```
+
+* Introduce some random tokens which will transfer information by transfering to other tokens which in turn can transfer to other tokens. This will reduce the cost of information travel from one token to other. This is why `random` attention attention is introduced.
+
+```python
+# Let's add random tokens to our `set`
+key_tokens.update(random_tokens)
+```
+
+Now, we just need our token to attend this `set` & possibly it will represent all the tokens nicely. Similar thing we will do for all the queries.
+
+### Understanding with Graphs
+
+Let's try to understand the need of `global`, `sliding` & `random` attention using the graphs.
 
 <img src="assets/global.png" width=256 height=200> </img>
 <img src="assets/sliding.png" width=256 height=200> </img>
 <img src="assets/random.png" width=256 height=200> </img> <br>
-*Above figure shows `global`, `sliding` & `random` connections respectively with the help of graph, where each node corresponds to token and each dotted-line represents attention score. If no connection is made between 2 tokens, then attention score is assumed to be 0.*
+*Above figure shows `global`, `sliding` & `random` connections respectively in graph, where each node corresponds to token and each dotted-line represents attention score. If no connection is made between 2 tokens, then attention score is assumed to 0.*
 
-BigBird block sparse attention is simply combination of these 3 figures. While in normal attention, all 81 connections would have been present in above figure. You can simply think of normal attention as all the tokens are global.
+BigBird block sparse attention is simply combination of these 3 figures. While in normal attention, all 81 connections (note: total 9 nodes are present) would have been present in above figure. You can simply think of normal attention as all the tokens being global.
 
-**Normal attention:**
+| Attention Type  | `global_tokens`   | `sliding_tokens` | `random_tokens`                    |
+|-----------------|-------------------|------------------|------------------------------------|
+| `original_full` | `n`               | 0                | 0                                  |
+| `block_sparse`  | 2 x `block_size`  | 3 x `block_size` | `num_random_blocks` x `block_size` |
 
-* Model can transfer information from one token to other directly in a single layer, since each token is queried over every other token and information is flowed among all the tokens in a single layer.
+*`original_full` represents BERT attention while `block_sparse` represents BigBird attention*
 
-**Block sparse attention:**
+**Normal attention:** Model can transfer information from one token to other directly in a single layer, since each token is queried over every other token and information can be flowed among all the tokens in a single layer.
 
-* If we want to share information between two nodes (or tokens), we may need to travel across various other nodes in the path. Since all the nodes are not directly connected in a single layer
-* Hence, we may need multiple layers to capture the entire information of the sequence; which normal attention can capture in a single layer. This can introduce time complexity of O(n^2) if we need as many layers as sequence length.
-
-| Attention Type  | `global_blocks`   | `sliding_blocks` | `random_blocks`     |
-|-----------------|-------------------|------------------|---------------------|
-| `original_full` | `n // block_size` | 0                | 0                   |
-| `block_sparse`  | 2                 | 3                | `num_random_blocks` |
+**Block sparse attention:** If we want to share information between two nodes (or tokens), we may need to travel across various other nodes in the path; since all the nodes are not directly connected in a single layer. Hence, we may need multiple layers to capture the entire information of the sequence; which normal attention can capture in a single layer. This can introduce time complexity of `O(n^2)` because now we need as many layers as sequence length.
 
 ## Big Bird block sparse attention
 
@@ -118,6 +153,7 @@ TODO
 |                 | 4096            | 64 x `M`                 |
 | `block_sparse`  | 1024            | 2 x `M`                  |
 |                 | 4096            | 8 x `M`                  |
+
 *In this table, I am trying to compare time & space complexity of BERT attention and BigBird block sparse attention.*
 
 <details>
@@ -203,6 +239,6 @@ You will soon see `BigBirdPegasus` in the library and will be able to do **long 
 
 ## End Notes
 
-Original implementation of **block sparse attention matrix** can be found [here](https://github.com/google-research/bigbird/blob/master/bigbird/core/attention.py). You can find **HuggingFace** version [here](https://github.com/huggingface/transformers/pull/10183).
+Original implementation of **block sparse attention matrix** can be found [here](https://github.com/google-research/bigbird/blob/master/bigbird/core/attention.py). You can find 🤗 version [here](https://github.com/huggingface/transformers/pull/10183).
 
 **Feel free to raise an issue, incase you found something wrong here. Star 🌟 this repo if you found this helpful.**
