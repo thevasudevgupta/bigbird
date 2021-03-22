@@ -238,7 +238,7 @@ It's important to keep following points in mind while working with big bird:
 
 [@patrickvonplaten](https://github.com/patrickvonplaten) has made a really cool [notebook](https://colab.research.google.com/drive/1BAraNpl98loPKG3NvdjJuCLCfvNOZO28) on how to evaluate `BigBirdForQuestionAnswering` on `trivia-qa` dataset. Feel free to play with big bird using that notebook.
 
-You will soon see `BigBirdPegasus` in the library and will be able to do **long documents summarization**💥 easily. Meanwhile, I created another [notebook](https://colab.research.google.com/github/vasudevgupta7/bigbird-intuition/blob/main/notebooks/bigbird_narrativeqa.ipynb) for you. Refer it, in case you wanna know how to fine-tune bigbird roberta on abstractive question-answering.
+You will soon see `BigBirdPegasus` in the library and will be able to do **long documents summarization**💥 easily.
 
 ## End Notes
 
