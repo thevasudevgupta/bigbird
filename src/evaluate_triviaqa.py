@@ -1,18 +1,12 @@
 # this code is adapted from notebook created by @patrick
+
 import os
 import datasets
 import torch
 from transformers import BigBirdTokenizer, BigBirdForQuestionAnswering
 
 DATA_DIR = "data"
-
-# define the mapping function
-def format_dataset(example):
-    # the context might be comprised of multiple contexts => me merge them here
-    example["context"] = " ".join(("\n".join(example["entity_pages"]["wiki_context"])).split("\n"))
-    example["targets"] = example["answer"]["aliases"]
-    example["norm_target"] = example["answer"]["normalized_value"]
-    return example
+# run `git clone https://huggingface.co/datasets/vasudevgupta/trivia_qa_rc_test`
 
 def evaluate(example):
     def get_answer(question, context):
@@ -49,14 +43,12 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         device = "cuda"
 
-    validation_dataset = datasets.load_dataset("trivia_qa", "rc", split="validation")
+    validation_dataset = datasets.load_from_disk("trivia_qa_rc_dev")
     print(validation_dataset)
 
-    # map the dataset and throw out all unnecessary columns
-    validation_dataset = validation_dataset.map(format_dataset, remove_columns=["search_results", "question_source", "entity_pages", "answer", "question_id"])
     validation_dataset = validation_dataset.filter(lambda x: len(x["context"]) > 0)
-
-    validation_dataset = validation_dataset.filter(lambda x: (len(x['question']) + len(x['context'])) < 4 * 4096)
+    # validation_dataset = validation_dataset.filter(lambda x: (len(x['question']) + len(x['context'])) < 4 * 4096)
+    print(validation_dataset)
 
     tokenizer = BigBirdTokenizer.from_pretrained("google/bigbird-base-trivia-itc")
     model = BigBirdForQuestionAnswering.from_pretrained("google/bigbird-base-trivia-itc").to(device)
