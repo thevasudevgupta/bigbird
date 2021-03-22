@@ -1,0 +1,3 @@
+git+https://github.com/vasudevgupta7/transformers@add_big_bird
+datasets
+sentencepiece
