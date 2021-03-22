@@ -33,7 +33,7 @@ We will define a `set` and fill it up with the tokens which current query should
 key_tokens = set()
 ```
 
-Nearby tokens are important obviously because in a sentence (sequence of words), the current word is highly dependent on neighboring future & past tokens. This intuitoin is the idea behind the concept of `sliding attention`.
+Nearby tokens are important because in a sentence (sequence of words), the current word is highly dependent on neighboring future & past tokens. This intuition is the idea behind the concept of `sliding attention`.
 
 ```python
 # Let's update `set` with nearby tokens
