@@ -26,19 +26,28 @@ In this block post, we will try to answer those questions. But first, let's give
 
 ### Let's build our attention matrix
 
-We will define a `set` and fill it up with the tokens which current query should attend based on some ideas & intuition.
+We will define an empty `set` and fill it up with the tokens which current query should attend based on some ideas & intuition.
 
 ```python
-# Let's consider a `set` and fill up the tokens of our interest which current query should attend.
-key_tokens = set()
+>>> # let's consider a sentence for understanding
+>>> example = ['BigBird', 'is', 'now', 'available', 'in', 'HuggingFace', 'for', 'question', 'answering']
+
+>>> # further let's assume, we're trying to understand the representation of 'available' i.e. 
+>>> query_token = 'available'
+
+>>> # We will initialize an empty `set` and fill up the tokens of our interest as we proceed in this section.
+>>> key_tokens = set() # => currently 'available' token doesn't have anything to attend
 ```
 
-Nearby tokens are important because in a sentence (sequence of words), the current word is highly dependent on neighboring future & past tokens. This intuition is the idea behind the concept of `sliding attention`.
+Nearby tokens should be important because in a sentence (sequence of words), the current word is highly dependent on neighboring future & past tokens. This intuition is the idea behind the concept of `sliding attention`.
 
 ```python
-# Let's update `set` with nearby tokens
-sliding_tokens = ["<something>", "....."]
-key_tokens.update(sliding_tokens)
+>>> # considering `window_size = 3`, we will consider 1 token to left & 1 to right of 'available'
+>>> # left token: 'now' ; right token: 'in'
+>>> sliding_tokens = ["now", "available", "in"]
+
+>>> # let's update our collection with the above tokens
+>>> key_tokens.update(sliding_tokens)
 ```
 
 **Long range dependencies:** For some tasks, it is crucial that the model is able to capture long range relationships between tokens. *E.g.*, in `question-answering` the model needs to compare each token of the context to the whole question to be able to figure out which part of the context is useful for a correct answer. If most of the context tokens would just attend to other context tokens, but not to the question, it becomes much harder for the model to filter important context tokens from less important context tokens.
@@ -48,20 +57,31 @@ Now, `BigBird` proposes two ways of allowing long-term attention dependencies wh
 * Introduce some tokens which will attend to every token and which are attented by every token. Eg: "HuggingFace is building nice libraries for easy NLP". Now, let's say 'building' is defined as a global token, and we want to associate 'NLP' with 'HuggingFace' for some task; Now having 'building' attend globally to all other tokens will probably help the model to assiciate 'NLP' with 'HuggingFace'.
 
 ```python
-# fill up global tokens in our `set`
-global_tokens = ["<something>", "....."]
-key_tokens.update(global_tokens)
+>>> # let's assume 1st & last token to be `global`, then
+>>> global_tokens = ["BigBird", "answering"]
+
+>>> # fill up global tokens in our key tokens collection
+>>> key_tokens.update(global_tokens)
 ```
 
 * Introduce some random tokens which will transfer information by transfering to other tokens which in turn can transfer to other tokens. This may reduce the cost of information travel from one token to other.
 
 ```python
-# Let's add random tokens to our `set`
-random_tokens = ["<something>", "....."]
-key_tokens.update(random_tokens)
+>>> # now we can choose `r` token randomly from our example sentence
+>>> # let's choose 'question', 'is' assuming `r=1`
+>>> random_tokens = ["is"]
+
+>>> # fill random tokens to our collection
+>>> key_tokens.update(random_tokens)
+
+>>> # it's time to see what all tokens get's into our `key_tokens`
+>>> key_tokens
+{'now', 'is', 'in', 'answering', 'available', 'BigBird'}
+
+# Now, 'available' (query we choose in our 1st step) will attend only these tokens instead of attending the complete sequence
 ```
 
-Now, we just need our token to attend this `set` & possibly it will represent all the tokens nicely. The same approach is used for all other tokens. 
+This way, we just need our query token to attend a subsequence & possibly it will represent all the tokens nicely. The same approach will be used for all other tokens.
 But remember, the idea here is to approximate `BERT`'s full attention as efficiently as possible. This is when `BigBird`'s block sparse attention comes into the picture.
 
 ### Understanding Big Bird's attention with Graphs
