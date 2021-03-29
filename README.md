@@ -231,10 +231,6 @@ Let's combine the above matrices to get the final attention matrix. This attenti
 
 We have covered the most hardest part of block sparse attention i.e. its implementation. Now you are set to read the code. Feel free to do that.
 
-### Normal sparse vs Block sparse
-
-TODO
-
 ## Time & Memory complexity
 
 | Attention Type  | Sequence length | Time & Memory Complexity |
@@ -323,6 +319,65 @@ model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", attention_ty
 ```
 
 There are total **3 checkpoints** available in **🤗Hub** (at the point of writing this article): [`bigbird-roberta-base`](https://huggingface.co/google/bigbird-roberta-base), [`bigbird-roberta-large`](https://huggingface.co/google/bigbird-roberta-large), [`bigbird-base-trivia-itc`](https://huggingface.co/google/bigbird-base-trivia-itc). The first two checkpoints come from pretraining `BigBirdForPretraining` with `masked_lm loss`; while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
+
+Let's have a look at minimal code (in case you like to use your own PyTorch trainer) you can write to use 🤗's BigBird model for fine-tuning on your tasks.
+
+```python
+# let's consider our task to be question-answering as an example
+
+from transformers import BigBirdForQuestionAnswering, BigBirdTokenizer
+import torch
+
+device = torch.device("cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+
+# lets initialize bigbird model from pretrained weights with randomly initialized head on its top
+model = BigBirdForQuestionAnswering.from_pretrained("google/bigbird-roberta-base", block_size=64, num_random_blocks=3)
+tokenizer = BigBirdTokenizer.from_pretrained("google/bigbird-roberta-base")
+model.to(device)
+
+dataset = "torch.utils.data.DataLoader object"
+optimizer = "torch.optim object"
+epochs = ...
+
+# very minimal training loop
+for e in range(epochs):
+    for batch in dataset:
+        model.train()
+        batch = {k: batch[k].to(device) for k in batch}
+
+        # forward pass
+        output = model(**batch)
+
+        # back-propogation
+        output["loss"].backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+# let's save final weights in local directory
+model.save_pretrained("<YOUR-WEIGHTS-DIR>")
+
+# let's push our weights to 🤗Hub
+from huggingface_hub import ModelHubMixin
+ModelHubMixin.push_to_hub("<YOUR-WEIGHTS-DIR>", model_id="<YOUR-FINETUNED-ID>")
+
+# using finetuned model for inference
+question = ["How are you doing?", "How is life going?"]
+context = ["<some big context having ans-1>", "<some big context having ans-2>"]
+batch = tokenizer(question, context, return_tensors="pt")
+batch = {k: batch[k].to(device) for k in batch}
+
+model = BigBirdForQuestionAnswering.from_pretrained("<YOUR-FINETUNED-ID>")
+model.to(device)
+with torch.no_grad():
+    start_logits, end_logits = model(**batch).to_tuple()
+    # now decode start_logits, end_logits with what ever strategy you want.
+
+# Note:
+# This was very minimal code (incase you want to use raw PyTorch) just for showing how BigBird can be used very easily
+# I would suggest to use 🤗Trainer for lot of features
+```
 
 It's important to keep the following points in mind while working with big bird:
 
