@@ -8,7 +8,7 @@ Transformer-based models have shown to be very useful for many NLP tasks. Howeve
 
 `BigBird` (introduced in [paper](https://arxiv.org/abs/2007.14062)) is one of such recent models to address this issue. `BigBird` relies on **block sparse attention** instead of normal attention (*i.e.* BERT's attention) and can handle sequences up to a length of **4096** at a much lower compute cost compared to BERT. It has achieved SOTA on various tasks involving very long sequences such as long documents summarization, question-answering with long contexts.
 
-**BigBird RoBERTa-like** model is now available in 🤗Transformers. The goal of this post is to give reader an **in-depth** understanding of big bird implementation & ease one's life in using big bird with 🤗Transformers. But, before going into more depth, it is important to remember that the `BigBird`s attention is an approximation of `BERT`'s full attention and is thus not **better** as `BERT's` full attention. It simply allows to apply transformer-based models to much longer sequences since BERT's quadratic memory requirement quickly becomes unbearable. Simply put, if we would have \\(\infty\\) compute & \\(\infty\\) time, BERT's attention is always better than block sparse attention (which we are going to discuss in this post). So, one should aim for attending to as many tokens as possible at a reasonable compute & memory cost.
+**BigBird RoBERTa-like** model is now available in 🤗Transformers. The goal of this post is to give reader an **in-depth** understanding of big bird implementation & ease one's life in using big bird with 🤗Transformers. But, before going into more depth, it is important to remember that the `BigBird's` attention is an approximation of `BERT`'s full attention and is thus not **better** as `BERT's` full attention. It simply allows to apply transformer-based models to much longer sequences since BERT's quadratic memory requirement quickly becomes unbearable. Simply put, if we would have \\(\infty\\) compute & \\(\infty\\) time, BERT's attention is always better than block sparse attention (which we are going to discuss in this post). So, one should aim for attending to as many tokens as possible at a reasonable compute & memory cost.
 
 If you wonder why we need more compute when working with longer sequences, (no worries!) just continue reading this post.
 
@@ -23,7 +23,7 @@ Some of the main question when working with normal `BERT`-like attention, one mi
 
 ---
 
-In this block post, we will try to answer those questions. But first, let's give some background on how attention works.
+In this blog post, we will try to answer those questions.
 
 ### What tokens to attend?
 
@@ -55,7 +55,7 @@ Nearby tokens should be important because in a sentence (sequence of words), the
 
 Now, `BigBird` proposes two ways of allowing long-term attention dependencies while staying computationally efficient.
 
-* **Global tokens:** Introduce some tokens which will attend to every token and which are attented by every token. Eg: *"HuggingFace is building nice libraries for easy NLP"*. Now, let's say *'building'* is defined as a global token, and needs to know relation among *'NLP'* & *'HuggingFace'* for some task; Now having 'building' attend globally to all other tokens will probably help the model to assiciate 'NLP' with 'HuggingFace'.
+* **Global tokens:** Introduce some tokens which will attend to every token and which are attented by every token. Eg: *"HuggingFace is building nice libraries for easy NLP"*. Now, let's say *'building'* is defined as a global token, and model needs to know relation among *'NLP'* & *'HuggingFace'* for some task (Note: these 2 tokens are at two extremes); Now having *'building'* attend globally to all other tokens will probably help the model to assiciate *'NLP'* with *'HuggingFace'*.
 
 ```python
 >>> # let's assume 1st & last token to be `global`, then
@@ -97,14 +97,15 @@ Let's try to understand the need of `global`, `sliding` & `random` attention usi
 
 ![](assets/graph.gif)
 <img src="assets/full.png" width=230 height=230> </img>
+
 ***BigBird block sparse attention** is simply combination of sliding, global & random connections (total 15 connections) as shown in `gif` in left. While, graph of **normal attention** (right) will have all 21 connections (note: total 6 nodes are present). You can simply think of normal attention as all the tokens attending globally.*
 
 **Normal attention:** Model can transfer information from one token to another token directly in a single layer, since each token is queried over every other token and is attended by every other tokens. Let's consider an example similar to what shown in above figures. If model needs to associate *'going'* with *'now'*, it can simply do that in a single layer since there is a direct connection joining both the tokens.
 
-**Block sparse attention:** If Model need to share information between two nodes (or tokens), information will have to travel across various other nodes in the path for some of the tokens; since all the nodes are not directly connected in a single layer.
-Eg. In case, model needs to associate *'going'* with *'now'*, if only sliding attention is present then for flow of information among those 2 tokens, information will travel via this path: `going -> am -> i -> now` (i.e. it will have to travel over 2 other tokens). Hence, we may need multiple layers to capture the entire information of the sequence; which normal attention can capture in a single layer. This can amount to a time complexity of $O(n^2)$ because now model may need as many layers as sequence length. But if we introduce some global tokens, then information can travel via path: `going -> i -> am` (which is shorter); while if we introduce random connections it can travel via: `going -> am -> now`. This way with the help of random connections & global connections, information can travel very fastly (possibly in very few layers) via multiple short paths.
+**Block sparse attention:** If model needs to share information between two nodes (or tokens), information will have to travel across various other nodes in the path for some of the tokens; since all the nodes are not directly connected in a single layer.
+*Eg.* In case, model needs to associate *'going'* with *'now'*, if only sliding attention is present then for flow of information among those 2 tokens, will happen via this path: `going -> am -> i -> now` (i.e. it will have to travel over 2 other tokens). Hence, we may need multiple layers to capture the entire information of the sequence; which normal attention can capture in a single layer. This can amount to a time complexity of $O(n^2)$ because now model may need as many layers as sequence length. But if we introduce some global tokens, then information can travel via path: `going -> i -> now` (which is shorter); while if we introduce random connections it can travel via: `going -> am -> now`. This way with the help of random connections & global connections, information can travel very fastly (possibly in very few layers) via multiple short paths.
 
-Think of the case when we have many global tokens, then we may not even need random tokens since there will be multiple short paths via which information can travel. This is the idea behind keeping `num_random_tokens = 0` when working with ETC (more on this in later sections).
+Think of the case when we have many global tokens, then we may not even need random tokens since there will be multiple short paths (involving global tokens) through which information can travel. This is the idea behind keeping `num_random_tokens = 0` when working with ETC (more on this in later sections).
 
 *Note: We are assuming that attention matrix to be symmetric **i.e.** \\(\mathbf{A}_{ij} = \mathbf{A}_{ji}\\) since in a graph if some token **A** attends **B**, then **B** will also attend **A**. You can clearly see from attention matrix (figure shown in next section) that this assumption holds for most of the tokens.*
 
@@ -180,9 +181,9 @@ Q[n-2] x [Q[r1], Q[r2], ......, Q[r]]
 
 ### Implementation
 
-**Recap:** In regular BERT attention, a sequence of tokens **i.e. $X = x_1, x_2, ...., x_n$** are projected through a dense layer into **$Q,K,V$** and attention score (**$Z$**) is calculated as **$Z=Softmax(QK^T)$**.
+**Recap:** In regular BERT attention, a sequence of tokens **i.e. $X = x_1, x_2, ...., x_n$** are projected through a dense layer into **$Q,K,V$** and attention score (**$Z$**) is calculated as **$Z=Softmax(QK^T)$**. Now, in case of BigBird block sparse attention, we are going to similar operation only but with selective queries & keys.
 
-Finally, let's try to look at how bigbird block sparse attention is implemented in code. But before that, let's define some terms. Also, assume $b, r, s, g$ represents `block_size`, `num_random_blocks`, `num_sliding_blocks`, `num_global_blocks`, respectively. Visually, we can illustrate big bird block sparse attention with $b=4, r=1, g=2, s=3, d=5$ as computation among following:
+Let's have a look at how bigbird block sparse attention is implemented in code. Assuming $b, r, s, g$ represents `block_size`, `num_random_blocks`, `num_sliding_blocks`, `num_global_blocks`, respectively. Visually, we can illustrate big bird block sparse attention with $b=4, r=1, g=2, s=3, d=5$ as computation among following:
 
 <img src="assets/intro.png" width=500 height=250> </img>
 
@@ -223,13 +224,13 @@ Attention score for \\(\mathbf{q}_{n}\\) represented by $a_n$ where $a_n=Softmax
 
 ---
 
-Let's combine the above matrices to get the final attention matrix. This attention matrix can be used to find representation of all the tokens.
+Let's combine the above matrices to get the final attention matrix. This attention matrix can be used to get representation of all the tokens.
 
 ![BigBird block sparse attention](assets/block-sparse-attn.gif)
 
-*`blue -> global blocks`, `red -> random blocks`, `orange -> sliding blocks` This attention matrix is just for representation. In practice, we aren't storing `white` blocks & calculating weighted value matrix (i.e. representation of each token) directly from separate component discussed above.*
+*`blue -> global blocks`, `red -> random blocks`, `orange -> sliding blocks` This attention matrix is just for illustration. During forward pass, we aren't storing `white` blocks & calculating weighted value matrix (i.e. representation of each token) directly from separated components discussed above.*
 
-We have covered the most hardest part of block sparse attention i.e. its implementation. Now you are set to read the code. Feel free to do that.
+We have covered the most hardest part of block sparse attention i.e. its implementation. Now, you are good to go to read the code. Feel free to do that.
 
 ## Time & Memory complexity
 
@@ -290,7 +291,7 @@ BigBird model can be trained using 2 different strategies: **ITC** & **ETC**. IT
 
 ITC requires less compute since very few tokens are globals & model can still capture global information with them. On the other hand, ETC can be very helpful for the tasks in which we need lot of global tokens such as `question-answering` in which entire question should be global, with many tokens of context to be able to understand context; `summarization` since model needs to understand the overall context of very long paragraph to be able to summarize.
 
-***Note:** In paper when working with ETC, number of random blocks are assumed to be 0 several times. This favours our discussion in graph section.*
+***Note:** In BigBird paper when working with ETC, number of random blocks are assumed to be 0 for training on many tasks. This favours our discussion in graph section.*
 
 The table below summarizes ITC & ETC:
 
@@ -320,7 +321,7 @@ model = BigBirdModel.from_pretrained("google/bigbird-roberta-base", attention_ty
 
 There are total **3 checkpoints** available in **🤗Hub** (at the point of writing this article): [`bigbird-roberta-base`](https://huggingface.co/google/bigbird-roberta-base), [`bigbird-roberta-large`](https://huggingface.co/google/bigbird-roberta-large), [`bigbird-base-trivia-itc`](https://huggingface.co/google/bigbird-base-trivia-itc). The first two checkpoints come from pretraining `BigBirdForPretraining` with `masked_lm loss`; while the last one corresponds to the checkpoint after finetuning `BigBirdForQuestionAnswering` on `trivia-qa` dataset.
 
-Let's have a look at minimal code (in case you like to use your own PyTorch trainer) you can write to use 🤗's BigBird model for fine-tuning on your tasks.
+Let's have a look at minimal code you can write (in case you like to use your own PyTorch trainer), to use 🤗's BigBird model for fine-tuning on your tasks.
 
 ```python
 # let's consider our task to be question-answering as an example
