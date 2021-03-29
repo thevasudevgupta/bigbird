@@ -115,7 +115,7 @@ Think of the case when we have many global tokens, then we may not even need ran
 
 *`original_full` represents `BERT`'s attention while `block_sparse` represents `BigBird`'s attention. Wondering what the `block_size` is? We will cover that in later sections. For now consider it to be 1 for simplicity*
 
-## BigBird Attention
+## BigBird block sparse attention
 
 BigBird block sparse attention is just an efficient implementation of what we discussed above. Each token is attending some **global tokens**, **sliding tokens**, & **random tokens** instead of attending to **all** other tokens. The authors hardcoded the attention matrix for mutiple query components seperately; and used a cool trick to speed up training/inference process on gpu/tpu.
 
@@ -178,42 +178,58 @@ Q[n-2] x [Q[r1], Q[r2], ......, Q[r]]
 
 **Note:** The current implementation further divides sequence into blocks & each notation is defined w.r.to block instead of token. Let's discuss more in next section.
 
-### Block sparse attention
+### Implementation
 
-<img src="assets/intro.png" width=300 height=150> </img>
+**Recap:** In regular BERT attention, a sequence of tokens **i.e. $X = x_1, x_2, ...., x_n$** are projected through a dense layer into **$Q,K,V$** and attention score (**$Z$**) is calculated as **$Z=Softmax(QK^T)$**.
 
-<!-- Each block will have `config.block_size` number of tokens & attention operation will happen over a complete block instead of of just 1 token. -->
+Finally, let's try to look at how bigbird block sparse attention is implemented in code. But before that, let's define some terms. Also, assume $b, r, s, g$ represents `block_size`, `num_random_blocks`, `num_sliding_blocks`, `num_global_blocks`, respectively. Visually, we can illustrate big bird block sparse attention with $b=4, r=1, g=2, s=3, d=5$ as computation among following:
 
-In regular BERT attention, a sequence of tokens **i.e. $X = x_1, x_2, ...., x_n$** are projected through a dense layer into **$Q,K,V$** and attention score (**$Z$**) is calculated as **$Z=Softmax(QK^T)$**.
+<img src="assets/intro.png" width=500 height=250> </img>
 
-Now, let's consider the case of bigbird block sparse attention. Representing **global blocks** by **blue**, **random blocks** by **red**, **sliding blocks** by **orange**; Let's assume $b, r, s, g$ represents `block_size`, `num_random_blocks`, `num_sliding_blocks`, `num_global_blocks`, respectively. Visually, we can illustrate big bird block sparse attention with $b=4, r=1, g=2, s=3, d=5$ as combination of following:
+Attention scores for \\({q}_{1}, {q}_{2}, {q}_{3:n-2}, {q}_{n-1}, {q}_{n}\\) are calculated seperately as described below:
 
-* Attention score for \\(\mathbf{q}_{1}\\) can be represented by $A_1$ where $A_1=Softmax(q_1K^T)$. This is nothing but attention score between all the tokens in 1st block with all the other tokens in sequence.
+---
+
+Attention score for \\(\mathbf{q}_{1}\\) represented by $a_1$ where $a_1=Softmax(q_1 * K^T)$, is nothing but attention score between all the tokens in 1st block with all the other tokens in sequence.
 
 ![BigBird block sparse attention](assets/q1.png)
-*This figure clearly by doing self-attention computation (between tokens from 1st block & all the tokens) on the right, we can fill our attention scores for 1st few tokens.*
+*$q_1$ represents 1st block, $g_i$ represents $i$ block. We are simply performing normal attention operation between $q_1$ & $g$ (i.e. all the keys).*
 
-* Attention score for \\(\mathbf{q}_{2}\\) can be represented as $A_2$ where $A_1=Softmax(q_2*[])$
+---
 
-$q_2$ is representing 2nd block. Attention score is calculated between all the tokens in 2nd block with all the tokens in sliding, global & random category.
+For calculating attention score for tokens in 2nd block, we are 1st gathering the 1st three blocks, last block, and fifth block. Then $a_2 = Softmax(q_2 * concat(k_1, k_2, k_3, k_5, k_7))$.
 
 ![BigBird block sparse attention](assets/q2.png)
 
-* Attention score for \\(\mathbf{Q}_{3:n-2}\\)
+*I am representing tokens by $g, r, s$ just to represent their nature explicitly (i.e. showing global, random, sliding tokens), else they are $k$ only.*
+
+---
+
+For calculating attention score for \\({q}_{3:n-2}\\), we will gather global, sliding, random keys & will simply calculate normal attention operation among all \\({q}_{3:n-2}\\) & gathered keys. Note that sliding keys are gathered using the special trick, we discussed in sliding attention section.
 
 ![BigBird block sparse attention](assets/q_middle.png)
 
-* Attention score for \\(\mathbf{Q}_{n-1}\\)
+---
+
+For calculating attention score for tokens in last 2nd block (i.e. \\({q}_{n-1}\\)), we are 1st gathering the 1st blocks, last three block, and 3rd block. Then \\({a}_{n-1} = Softmax({q}_{n-1} * concat(k_1, k_3, k_5, k_6, k_7))\\). This is very similar to what we did for $q_2$.
 
 ![BigBird block sparse attention](assets/qlast_sec.png)
 
-* Attention score for \\(\mathbf{Q}_{n}\\)
+---
+
+Attention score for \\(\mathbf{q}_{n}\\) represented by $a_n$ where $a_n=Softmax(q_n * K^T)$, is nothing but attention score between all the tokens in last block with all the other tokens in sequence. This is very similar to what we did for $q_1$.
 
 ![BigBird block sparse attention](assets/qlast.png)
 
-$V$ can be calculated for each of the component above, i.e. $V = v_1, v_2, ..., v_n$; where $v_i$ represents value score for \\({i}_{th}\\) token in sequence.
+---
 
-![BigBird block sparse attention](assets/block_sparse.png)
+Let's combine the above matrices to get the final attention matrix. This attention matrix can be used to find representation of all the tokens.
+
+![BigBird block sparse attention](assets/block-sparse-attn.gif)
+
+*`blue -> global blocks`, `red -> random blocks`, `orange -> sliding blocks` This attention matrix is just for representation. In practice, we aren't storing `white` blocks & calculating weighted value matrix (i.e. representation of each token) directly from separate component discussed above.*
+
+We have covered the most hardest part of block sparse attention i.e. its implementation. Now you are set to read the code. Feel free to do that.
 
 ### Normal sparse vs Block sparse
 
