@@ -397,6 +397,6 @@ You will soon find **BigBird Pegasus-like** model in the library and will be abl
 
 ## End Notes
 
-The original implementation of **block sparse attention matrix** can be found [here](https://github.com/google-research/bigbird/blob/master/bigbird/core/attention.py). You can find 🤗 version TODO [here](https://github.com/huggingface/transformers/pull/10183).
+The original implementation of **block sparse attention matrix** can be found [here](https://github.com/google-research/bigbird/blob/master/bigbird/core/attention.py). You can find 🤗 version [here](https://github.com/huggingface/transformers/tree/master/src/transformers/models/big_bird).
 
 **Feel free to raise an issue, incase you found something wrong here. Star 🌟 this repo if you found this helpful.**
