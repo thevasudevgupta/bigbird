@@ -1,3 +1,6 @@
-git+https://github.com/vasudevgupta7/transformers@add_big_bird
+git+https://github.com/huggingface/transformers@master
 datasets
 sentencepiece
+wandb
+tensorboard
+torch
