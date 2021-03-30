@@ -4,3 +4,4 @@ sentencepiece
 wandb
 tensorboard
 torch
+apache_beam
