@@ -1,6 +1,11 @@
 
 # PUNCTUATION_SET_TO_EXCLUDE = ['‘', '’', '´', '`', "''", "^", "``"]
 
+from tqdm import tqdm
+import jsonlines
+import numpy as np
+
+
 def _get_single_answer(example):
     def choose_first(answer, is_long_answer=False):
         assert isinstance(answer, list)
@@ -201,9 +206,91 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=2048, max_length
     }
 
 
-def prepare_inputs():
-    return
+def prepare_inputs(example, tokenizer, doc_stride=1024, max_length=4096, assertion=False):
+    example = get_strided_contexts_and_ans(example, tokenizer, doc_stride=doc_stride, max_length=max_length, assertion=assertion)
+    # for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+    #     if len(ids[start: 1+end]) > 0:
+    #         end_idx = ids.index(tokenizer.sep_token_id)
+    #         print(tokenizer.decode(ids[: end_idx]))
+    #         print(tokenizer.decode(ids[start: 1+end]), end="\n\n")
+    return example
 
+
+
+    @staticmethod
+    def get_inputs(data):
+        input_ids = []
+        start_positions = []
+        end_positions = []
+        for example in tqdm(data, total=len(data), desc="combining samples ... "):
+            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+                # leave waste samples
+                if start == -1:
+                    continue
+                if start == 0 and end == 0:
+                    if np.random.rand() < 0.5:
+                        continue
+                input_ids.append(ids)
+                start_positions.append(start)
+                end_positions.append(end)
+        return input_ids, start_positions, end_positions
+
+
+    @staticmethod
+    def get_inputs(data):
+        input_ids = []
+        start_positions = []
+        end_positions = []
+        for example in tqdm(data, total=len(data), desc="combining samples ... "):
+            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+                # leave waste samples
+                if start == -1:
+                    continue
+                if start == 0 and end == 0:
+                    if np.random.rand() < 0.5:
+                        continue
+                input_ids.append(ids)
+                start_positions.append(start)
+                end_positions.append(end)
+        return input_ids, start_positions, end_positions
+
+
+    @staticmethod
+    def get_inputs(data):
+        input_ids = []
+        start_positions = []
+        end_positions = []
+        for example in tqdm(data, total=len(data), desc="combining samples ... "):
+            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+                # leave waste samples
+                if start == -1:
+                    continue
+                if start == 0 and end == 0:
+                    if np.random.rand() < 0.5:
+                        continue
+                input_ids.append(ids)
+                start_positions.append(start)
+                end_positions.append(end)
+        return input_ids, start_positions, end_positions
+
+
+def save_to_disk(hf_data, file_name):
+
+    with jsonlines.open(file_name, "a") as writer:
+        for example in tqdm(hf_data, total=len(hf_data), desc="Saving samples ... "):
+            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+                # leave waste samples
+                if start == -1:
+                    continue
+                if start == 0 and end == 0:
+                    if np.random.rand() < 0.5:
+                        continue
+                writer.write({"input_ids": ids, "start_token": start, "end_token": end})
+    return 1
+
+
+PROCESS_TRAIN = False
+SEED = 42
 
 if __name__ == "__main__":
     """ Testing area """
@@ -212,14 +299,10 @@ if __name__ == "__main__":
 
     data = load_dataset('natural_questions')
     tok = BigBirdTokenizer.from_pretrained("google/bigbird-roberta-base")
-    # sample with less seqlen = 3439
 
-    # eg = data['train'][84593]
-    # o = get_strided_contexts_and_ans(eg, tok)
-    # print("QUESTION", eg['question']['text'])
-    # for i in range(len(o['answers_start_token'])):
-    #     a = o['answers_start_token'][i]
-    #     b = o['answers_end_token'][i]
-    #     print("ANSWER", tok.decode(o["input_ids"][i][a: b+1]), a, b)
-
-    data = data['train'].map(get_strided_contexts_and_ans, fn_kwargs=dict(tokenizer=tok, assertion=True))
+    data = data["train"] if PROCESS_TRAIN else data['validation']
+    cache_file_name = "data/nq-training" if PROCESS_TRAIN else "data/nq-validation"
+    data = data.map(prepare_inputs, fn_kwargs=dict(tokenizer=tok, assertion=False), cache_file_name=cache_file_name)
+    data = data.remove_columns(['annotations', 'document', 'id', 'question'])
+    np.random.seed(SEED)
+    save_to_disk(data, file_name=cache_file_name+".jsonl")
