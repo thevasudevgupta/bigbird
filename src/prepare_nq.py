@@ -215,64 +215,22 @@ def prepare_inputs(example, tokenizer, doc_stride=1024, max_length=4096, asserti
     #         print(tokenizer.decode(ids[start: 1+end]), end="\n\n")
     return example
 
-
-
-    @staticmethod
-    def get_inputs(data):
-        input_ids = []
-        start_positions = []
-        end_positions = []
-        for example in tqdm(data, total=len(data), desc="combining samples ... "):
-            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
-                # leave waste samples
-                if start == -1:
-                    continue
-                if start == 0 and end == 0:
-                    if np.random.rand() < 0.5:
-                        continue
-                input_ids.append(ids)
-                start_positions.append(start)
-                end_positions.append(end)
-        return input_ids, start_positions, end_positions
-
-
-    @staticmethod
-    def get_inputs(data):
-        input_ids = []
-        start_positions = []
-        end_positions = []
-        for example in tqdm(data, total=len(data), desc="combining samples ... "):
-            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
-                # leave waste samples
-                if start == -1:
-                    continue
-                if start == 0 and end == 0:
-                    if np.random.rand() < 0.5:
-                        continue
-                input_ids.append(ids)
-                start_positions.append(start)
-                end_positions.append(end)
-        return input_ids, start_positions, end_positions
-
-
-    @staticmethod
-    def get_inputs(data):
-        input_ids = []
-        start_positions = []
-        end_positions = []
-        for example in tqdm(data, total=len(data), desc="combining samples ... "):
-            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
-                # leave waste samples
-                if start == -1:
-                    continue
-                if start == 0 and end == 0:
-                    if np.random.rand() < 0.5:
-                        continue
-                input_ids.append(ids)
-                start_positions.append(start)
-                end_positions.append(end)
-        return input_ids, start_positions, end_positions
-
+# def get_inputs(data):
+#     input_ids = []
+#     start_positions = []
+#     end_positions = []
+#     for example in tqdm(data, total=len(data), desc="combining samples ... "):
+#         for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+#             # leave waste samples
+#             if start == -1:
+#                 continue
+#             if start == 0 and end == 0:
+#                 if np.random.rand() < 0.5:
+#                     continue
+#             input_ids.append(ids)
+#             start_positions.append(start)
+#             end_positions.append(end)
+#     return input_ids, start_positions, end_positions
 
 def save_to_disk(hf_data, file_name):
 
