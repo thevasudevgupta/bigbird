@@ -60,6 +60,7 @@ def get_context_and_ans(example, assertion=False):
     del answer['start_byte']
     del answer['end_byte']
 
+    # later, help in removing all yes_no answers & no answers
     if len(answer['start_token']) == 0:
         return {
             "context": "None",
@@ -120,11 +121,13 @@ def get_context_and_ans(example, assertion=False):
     }
 
 
-def get_strided_contexts_and_ans(example, tokenizer, doc_stride=2048, max_length=4096, assertion=True):
+def get_strided_contexts_and_ans(example, tokenizer, doc_stride=1024, max_length=4096, assertion=True):
     # overlap will be of doc_stride - q_len
 
     out = get_context_and_ans(example, assertion=assertion)
     answer = out['answer']
+
+    # later, removing these samples
     if answer['start_token'] == -1:
         return {
         "example_id": example['id'],
@@ -180,6 +183,12 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=2048, max_length
         slice = input_ids[i: end_index]
         inputs.append(q_indices + slice)
         assert len(inputs[-1]) <= max_length, "Issue in truncating length"
+
+        # 
+        # print("TOKENs", start_token, end_token)
+        # print("START, END", i, end_index-1)
+        # 
+
         if start_token >= i and end_token <= end_index-1:
             start_token = start_token - i + q_len
             end_token = end_token - i + q_len
@@ -187,6 +196,10 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=2048, max_length
             start_token = 0
             end_token = 0
         new = inputs[-1][start_token: end_token+1]
+        # 
+        # print('New:', tokenizer.decode(new))
+        # print('Old:', tokenizer.decode(old), end='\n\n')
+        # 
         answers_start_token.append(start_token)
         answers_end_token.append(end_token)
         if assertion:
@@ -208,11 +221,15 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=2048, max_length
 
 def prepare_inputs(example, tokenizer, doc_stride=1024, max_length=4096, assertion=False):
     example = get_strided_contexts_and_ans(example, tokenizer, doc_stride=doc_stride, max_length=max_length, assertion=assertion)
+    #
     # for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
     #     if len(ids[start: 1+end]) > 0:
     #         end_idx = ids.index(tokenizer.sep_token_id)
     #         print(tokenizer.decode(ids[: end_idx]))
     #         print(tokenizer.decode(ids[start: 1+end]), end="\n\n")
+    #     else:
+    #         print("START, END", start, end)
+    #
     return example
 
 # def get_inputs(data):
@@ -240,6 +257,9 @@ def save_to_disk(hf_data, file_name):
                 # leave waste samples
                 if start == -1:
                     continue
+                # print(tokenizer.decode(ids[:ids.index(tokenizer.sep_token_id)]))
+                # print(tokenizer.decode(ids[start: end+1]))
+                # print()
                 if start == 0 and end == 0:
                     if np.random.rand() < 0.5:
                         continue
@@ -256,11 +276,22 @@ if __name__ == "__main__":
     from transformers import BigBirdTokenizer
 
     data = load_dataset('natural_questions')
-    tok = BigBirdTokenizer.from_pretrained("google/bigbird-roberta-base")
+    tokenizer = BigBirdTokenizer.from_pretrained("google/bigbird-roberta-base")
+
+    #
+    # data = data["train"].select(range(20))
+    # for i, sample in enumerate(data):
+    #     # print(i)
+    #     if i == 7:
+    #         prepare_inputs(sample, tokenizer=tokenizer, assertion=False)
+    #         break
+    # print(data)
+    # exit()
+    #
 
     data = data["train"] if PROCESS_TRAIN else data['validation']
     cache_file_name = "data/nq-training" if PROCESS_TRAIN else "data/nq-validation"
-    data = data.map(prepare_inputs, fn_kwargs=dict(tokenizer=tok, assertion=False), cache_file_name=cache_file_name)
+    data = data.map(prepare_inputs, fn_kwargs=dict(tokenizer=tokenizer, assertion=False), cache_file_name=cache_file_name)
     data = data.remove_columns(['annotations', 'document', 'id', 'question'])
     np.random.seed(SEED)
     save_to_disk(data, file_name=cache_file_name+".jsonl")
