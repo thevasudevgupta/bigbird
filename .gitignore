@@ -6,6 +6,9 @@ __pycache__/
 .vscode/
 data/
 wandb/
+important/
+bigbird-nq-output-dir/
+data-1024-stride/
 
 # C extensions
 *.so

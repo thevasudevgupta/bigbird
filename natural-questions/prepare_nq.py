@@ -1,9 +1,11 @@
 
-# PUNCTUATION_SET_TO_EXCLUDE = ['‘', '’', '´', '`', "''", "^", "``"]
-
 from tqdm import tqdm
 import jsonlines
 import numpy as np
+import os
+from params import DOC_STRIDE, MAX_LENGTH, SEED, CATEGORY_MAPPING
+
+PROCESS_TRAIN = eval(os.environ.pop("PROCESS_TRAIN", "False"))
 
 
 def _get_single_answer(example):
@@ -49,7 +51,6 @@ def _get_single_answer(example):
     if not all([isinstance(answer[k], list) for k in cols]):
         raise ValueError("Issue in ID", example['id'])
 
-    # print(answer)
     return answer
 
 
@@ -60,19 +61,39 @@ def get_context_and_ans(example, assertion=False):
     del answer['start_byte']
     del answer['end_byte']
 
-    # later, help in removing all yes_no answers & no answers
-    if len(answer['start_token']) == 0:
+    # handle yes_no answers explicitly
+    if answer['category'][0] in ['yes', 'no']: # category is list with one element
+        doc = example['document']['tokens']
+        context = []
+        for i in range(len(doc['token'])):
+            if not doc['is_html'][i]:
+                context.append(doc['token'][i])
+        return {
+            "context": " ".join(context),
+            "answer": {
+                "start_token": -100, # ignore index in cross-entropy
+                "end_token": -100, # ignore index in cross-entropy
+                "category": answer['category'],
+                "span": answer['category'], # extra
+            }
+        }
+
+    # later, help in removing all no answers
+    if answer['start_token'] == [-1]:
         return {
             "context": "None",
             "answer": {
                 'start_token': -1,
                 'end_token': -1,
-                'span': "None",
+                'category': "null",
+                'span': "None", # extra
             }
         }
 
+    # handling normal samples
+
     cols = ['start_token', 'end_token']
-    answer.update({k: answer[k][0] if len(answer[k])>0 else answer[k] for k in cols})
+    answer.update({k: answer[k][0] if len(answer[k])>0 else answer[k] for k in cols}) # e.g. [10] == 10
 
     doc = example['document']['tokens']
     start_token = answer['start_token']
@@ -100,28 +121,18 @@ def get_context_and_ans(example, assertion=False):
             print('New:', new, end='\n')
             print('Old:', old, end='\n\n')
 
-    # print(start_token, end_token - 1, new)
-    # context = [c.strip()  ]
-    # out = []
-    # for c in context:
-    #     if c not in PUNCTUATION_SET_TO_EXCLUDE:
-    #         out.append(c.strip())
-    #     else:
-    #         answer['start_token'] -= 1
-    #         answer['end_token'] -= 1
-    # context = out
-
     return {
         'context': " ".join(context),
         'answer': {
             "start_token": start_token,
-            "end_token": end_token - 1, # this makes inclusive
-            "span": new,
+            "end_token": end_token - 1, # this makes it inclusive
+            "category": answer["category"], # either long or short
+            "span": new, # extra
         }
     }
 
 
-def get_strided_contexts_and_ans(example, tokenizer, doc_stride=1024, max_length=4096, assertion=True):
+def get_strided_contexts_and_ans(example, tokenizer, doc_stride=2048, max_length=4096, assertion=True):
     # overlap will be of doc_stride - q_len
 
     out = get_context_and_ans(example, assertion=assertion)
@@ -132,18 +143,45 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=1024, max_length
         return {
         "example_id": example['id'],
         "input_ids": [[-1]],
-        "answers_start_token": [-1],
-        "answers_end_token": [-1],
+        "labels": {
+            "start_token": [-1],
+            "end_token": [-1],
+            "category": ["null"],
+        }
     }
 
     input_ids = tokenizer(example['question']['text'], out['context']).input_ids
+    q_len = input_ids.index(tokenizer.sep_token_id) + 1
+
+    # return yes/no
+    if answer['category'][0] in ['yes', 'no']: # category is list with one element
+        inputs = []
+        category = []
+        q_indices = input_ids[:q_len]
+        doc_start_indices = range(q_len, len(input_ids), max_length-doc_stride)
+        for i in doc_start_indices:
+            end_index = i + max_length - q_len
+            slice = input_ids[i: end_index]
+            inputs.append(q_indices + slice)
+            category.append(answer["category"][0])
+            if slice[-1] == tokenizer.sep_token_id:
+                break
+
+        return {
+            "example_id": example['id'],
+            "input_ids": inputs,
+            "labels": {
+                "start_token": [-100]*len(category),
+                "end_token": [-100]*len(category),
+                "category": category,
+            }
+        }
 
     splitted_context = out['context'].split()
     complete_end_token = splitted_context[answer['end_token']]
     answer['start_token'] = len(tokenizer(" ".join(splitted_context[:answer['start_token']]), add_special_tokens=False).input_ids)
     answer['end_token'] = len(tokenizer(" ".join(splitted_context[:answer['end_token']]), add_special_tokens=False).input_ids)
 
-    q_len = input_ids.index(tokenizer.sep_token_id) + 1
     answer['start_token'] += q_len
     answer['end_token'] += q_len
 
@@ -168,8 +206,11 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=1024, max_length
         return {
             "example_id": example['id'],
             "input_ids": [input_ids],
-            "answers_start_token": [answer["start_token"]],
-            "answers_end_token": [answer["end_token"]],
+            "labels": {
+                "start_token": [answer["start_token"]],
+                "end_token": [answer["end_token"]],
+                "category": answer['category'],
+            }
         }
 
     q_indices = input_ids[:q_len]
@@ -178,28 +219,23 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=1024, max_length
     inputs = []
     answers_start_token = []
     answers_end_token = []
+    answers_category = [] # null, yes, no, long, short
     for i in doc_start_indices:
         end_index = i + max_length - q_len
         slice = input_ids[i: end_index]
         inputs.append(q_indices + slice)
         assert len(inputs[-1]) <= max_length, "Issue in truncating length"
 
-        # 
-        # print("TOKENs", start_token, end_token)
-        # print("START, END", i, end_index-1)
-        # 
-
         if start_token >= i and end_token <= end_index-1:
             start_token = start_token - i + q_len
             end_token = end_token - i + q_len
+            answers_category.append(answer['category'][0]) # ["short"] -> "short"
         else:
-            start_token = 0
-            end_token = 0
+            start_token = -100
+            end_token = -100
+            answers_category.append("null")
         new = inputs[-1][start_token: end_token+1]
-        # 
-        # print('New:', tokenizer.decode(new))
-        # print('Old:', tokenizer.decode(old), end='\n\n')
-        # 
+
         answers_start_token.append(start_token)
         answers_end_token.append(end_token)
         if assertion:
@@ -214,84 +250,69 @@ def get_strided_contexts_and_ans(example, tokenizer, doc_stride=1024, max_length
     return {
         "example_id": example['id'],
         "input_ids": inputs,
-        "answers_start_token": answers_start_token,
-        "answers_end_token": answers_end_token,
+        "labels": {
+            "start_token": answers_start_token,
+            "end_token": answers_end_token,
+            "category": answers_category,
+        }
     }
 
 
-def prepare_inputs(example, tokenizer, doc_stride=1024, max_length=4096, assertion=False):
+def prepare_inputs(example, tokenizer, doc_stride=2048, max_length=4096, assertion=False):
     example = get_strided_contexts_and_ans(example, tokenizer, doc_stride=doc_stride, max_length=max_length, assertion=assertion)
     #
-    # for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
+    # labels = example['labels']
+    # print(labels)
+    # for ids, start, end, cat in zip(example['input_ids'], labels['start_token'], labels['end_token'], labels['category']):
     #     if len(ids[start: 1+end]) > 0:
     #         end_idx = ids.index(tokenizer.sep_token_id)
     #         print(tokenizer.decode(ids[: end_idx]))
-    #         print(tokenizer.decode(ids[start: 1+end]), end="\n\n")
-    #     else:
-    #         print("START, END", start, end)
+    #         if start != -100 and end != -100:
+    #             print(tokenizer.decode(ids[start: 1+end]), end="\n\n")
     #
     return example
 
-# def get_inputs(data):
-#     input_ids = []
-#     start_positions = []
-#     end_positions = []
-#     for example in tqdm(data, total=len(data), desc="combining samples ... "):
-#         for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
-#             # leave waste samples
-#             if start == -1:
-#                 continue
-#             if start == 0 and end == 0:
-#                 if np.random.rand() < 0.5:
-#                     continue
-#             input_ids.append(ids)
-#             start_positions.append(start)
-#             end_positions.append(end)
-#     return input_ids, start_positions, end_positions
 
 def save_to_disk(hf_data, file_name):
-
     with jsonlines.open(file_name, "a") as writer:
         for example in tqdm(hf_data, total=len(hf_data), desc="Saving samples ... "):
-            for ids, start, end in zip(example['input_ids'], example['answers_start_token'], example['answers_end_token']):
-                # leave waste samples
-                if start == -1:
-                    continue
+            labels = example["labels"]
+            for ids, start, end, cat in zip(example['input_ids'], labels['start_token'], labels['end_token'], labels['category']):
+                if start == -1 and end == -1:
+                    continue # leave waste samples with no answer
+                #
                 # print(tokenizer.decode(ids[:ids.index(tokenizer.sep_token_id)]))
-                # print(tokenizer.decode(ids[start: end+1]))
+                # print(start, end, cat)
+                # if start != -100 and end != -100:
+                #     print(tokenizer.decode(ids[start: end+1]))
                 # print()
-                if start == 0 and end == 0:
-                    if np.random.rand() < 0.5:
-                        continue
-                writer.write({"input_ids": ids, "start_token": start, "end_token": end})
+                #
+                if cat == "null" and np.random.rand() < 0.6:
+                    continue # removing 50 % samples
+                writer.write({"input_ids": ids, "start_token": start, "end_token": end, "category": CATEGORY_MAPPING[cat]})
     return 1
 
 
-PROCESS_TRAIN = False
-SEED = 42
-
 if __name__ == "__main__":
-    """ Testing area """
+    """ Running area """
     from datasets import load_dataset
     from transformers import BigBirdTokenizer
 
     data = load_dataset('natural_questions')
     tokenizer = BigBirdTokenizer.from_pretrained("google/bigbird-roberta-base")
 
-    #
-    # data = data["train"].select(range(20))
-    # for i, sample in enumerate(data):
-    #     # print(i)
-    #     if i == 7:
-    #         prepare_inputs(sample, tokenizer=tokenizer, assertion=False)
-    #         break
-    # print(data)
-    # exit()
-    #
+    data = data["train" if PROCESS_TRAIN else 'validation']
+    # data = data.select(range(100))
 
-    data = data["train"] if PROCESS_TRAIN else data['validation']
     cache_file_name = "data/nq-training" if PROCESS_TRAIN else "data/nq-validation"
-    data = data.map(prepare_inputs, fn_kwargs=dict(tokenizer=tokenizer, assertion=False), cache_file_name=cache_file_name)
+    fn_kwargs = dict(
+        tokenizer=tokenizer, doc_stride=DOC_STRIDE, max_length=MAX_LENGTH, assertion=False
+    )
+    data = data.map(
+        prepare_inputs, fn_kwargs=fn_kwargs, cache_file_name=cache_file_name
+    )
     data = data.remove_columns(['annotations', 'document', 'id', 'question'])
+    print(data)
+
     np.random.seed(SEED)
     save_to_disk(data, file_name=cache_file_name+".jsonl")

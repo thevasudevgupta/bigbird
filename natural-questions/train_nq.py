@@ -10,14 +10,18 @@ import os
 
 os.environ['WANDB_WATCH'] = "false"
 os.environ['WANDB_PROJECT'] = "bigbird-natural-questions"
-MODEL_ID = "google/bigbird-roberta-base"
-SEED = 42
 TRAIN_ON_SMALL = eval(os.environ.pop("TRAIN_ON_SMALL", "False"))
 
+from params import (
+    MODEL_ID,
+    SEED,
+    GROUP_BY_LENGTH,
+    LEARNING_RATE,
+    MAX_EPOCHS,
+    FP16,
+)
+
 RESUME_TRAINING = None
-# DEBUG = False
-# if DEBUG:
-#     TRAIN_ON_SMALL = True
 
 def collate_fn(features, pad_id=0, threshold=1024):
     def pad_elems(ls, pad_id, maxlen):
@@ -39,20 +43,12 @@ def collate_fn(features, pad_id=0, threshold=1024):
     attention_mask[attention_mask != pad_id] = 1
     attention_mask[attention_mask == pad_id] = 0
 
-    # debugging
-    # if DEBUG:
-    #     st = [x['start_token'] for x in features]
-    #     ed = [x['end_token'] for x in features]
-    #     for ids, s, e in zip(input_ids.tolist(), st, ed):
-    #         print(tokenizer.decode(ids[:ids.index(tokenizer.sep_token_id)]))
-    #         print(tokenizer.decode(ids[s: e+1]))
-    #         print()
-
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
         "start_positions": torch.tensor([x['start_token'] for x in features], dtype=torch.long),
         "end_positions": torch.tensor([x['end_token'] for x in features], dtype=torch.long),
+        "pooler_label": torch.tensor([x["category"] for x in features]),
     }
 
 
@@ -72,18 +68,18 @@ if __name__ == "__main__":
         val_dataset = val_dataset.select(indices)
 
     # let's try on samples without `cls`
-    tr_dataset = tr_dataset.filter(lambda x: not (x['start_token'] == 0 and x['end_token'] == 0))
-    val_dataset = val_dataset.filter(lambda x: not (x['start_token'] == 0 and x['end_token'] == 0))
+    # tr_dataset = tr_dataset.filter(lambda x: not (x['start_token'] == 0 and x['end_token'] == 0))
+    # val_dataset = val_dataset.filter(lambda x: not (x['start_token'] == 0 and x['end_token'] == 0))
     print(tr_dataset, val_dataset)
 
     tokenizer = BigBirdTokenizer.from_pretrained(MODEL_ID)
 
-    # if DEBUG:
-    #     for data in torch.utils.data.DataLoader(tr_dataset, batch_size=32, collate_fn=collate_fn, shuffle=False):
-    #         pass
-    #     exit()
+    # for data in torch.utils.data.DataLoader(tr_dataset, batch_size=32, collate_fn=collate_fn, shuffle=False):
+    #     pass
+    # exit()
 
-    model = BigBirdForQuestionAnswering.from_pretrained(MODEL_ID, block_size=64, num_random_blocks=3, attention_type="block_sparse", gradient_checkpointing=True)
+    # TODO: add pooler label
+    model = BigBirdForQuestionAnswering.from_pretrained(MODEL_ID, gradient_checkpointing=True)
 
     args = TrainingArguments(
         output_dir="bigbird-nq-output-dir",
@@ -94,10 +90,10 @@ if __name__ == "__main__":
         # eval_steps=4000,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        gradient_accumulation_steps=4,
-        group_by_length=True,
-        learning_rate=7e-5,
-        num_train_epochs=3,
+        gradient_accumulation_steps=16,
+        group_by_length=GROUP_BY_LENGTH,
+        learning_rate=LEARNING_RATE,
+        num_train_epochs=MAX_EPOCHS,
         logging_strategy="steps",
         logging_steps=5,
         save_strategy="steps",
@@ -107,7 +103,7 @@ if __name__ == "__main__":
         # load_best_model_at_end=True,
         report_to="wandb",
         remove_unused_columns=False,
-        fp16=False,
+        fp16=FP16,
     )
     print("Batch Size", args.train_batch_size)
     print("Parallel Mode", args.parallel_mode)
