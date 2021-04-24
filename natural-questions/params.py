@@ -2,13 +2,14 @@
 DOC_STRIDE = 2048
 MAX_LENGTH = 4096
 SEED = 42
-# BATCH_SIZE = 128
+# BATCH_SIZE = 32
 
 GROUP_BY_LENGTH = True
-# LEARNING_RATE = 
-# MAX_EPOCHS = 
-# FP16 = 
-# SCHEDULER = 
+LEARNING_RATE = 1.e-4
+WARMUP_STEPS = 50
+MAX_EPOCHS = 3
+FP16 = False
+SCHEDULER = "linear"
 
 MODEL_ID = "google/bigbird-roberta-base"
 
