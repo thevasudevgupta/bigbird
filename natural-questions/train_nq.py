@@ -69,7 +69,9 @@ class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
         end_positions = kwargs.pop("end_positions", None)
 
         outputs = super().forward(*args, **kwargs)
+        cls_out = self.cls(outputs.pooler_output)
 
+        loss = None
         if start_positions is not None and end_positions is not None:
             loss_fct = nn.CrossEntropyLoss()
             # If we are on multi-GPU, split add a dimension
@@ -82,12 +84,17 @@ class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
             end_loss = loss_fct(outputs.end_logits, end_positions)
 
             if category is not None:
-                cls_loss = loss_fct(self.cls(outputs.pooler_output), category)
+                cls_loss = loss_fct(cls_out, category)
                 loss = (start_loss + end_loss + cls_loss) / 3
             else:
                 loss = (start_loss + end_loss) / 2
 
-        return {"loss": loss}
+        return {
+            "loss": loss,
+            "start_logits": outputs.start_logits,
+            "end_logits": outputs.end_logits,
+            "cls_out": cls_out,
+        }
 
 
 if __name__ == "__main__":
