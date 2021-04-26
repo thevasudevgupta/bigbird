@@ -1,4 +1,4 @@
-# TRAIN_ON_SMALL=True python3 -m torch.distributed.launch train_nq.py
+# TRAIN_ON_SMALL=True python3 -m torch.distributed.launch --nproc_per_node=2 train_nq.py
 
 from transformers import BigBirdForQuestionAnswering, BigBirdTokenizer
 from transformers import TrainingArguments, Trainer
@@ -63,12 +63,9 @@ class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
         super().__init__(config, add_pooling_layer=True)
         self.cls = nn.Linear(config.hidden_size, 5)
 
-    def forward(self, *args, **kwargs):
-        category = kwargs.pop("pooler_label", None)
-        start_positions = kwargs.pop("start_positions", None)
-        end_positions = kwargs.pop("end_positions", None)
+    def forward(self, input_ids, attention_mask=None, start_positions=None, end_positions=None, pooler_label=None):
 
-        outputs = super().forward(*args, **kwargs)
+        outputs = super().forward(input_ids, attention_mask=attention_mask)
         cls_out = self.cls(outputs.pooler_output)
 
         loss = None
@@ -83,8 +80,8 @@ class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
             start_loss = loss_fct(outputs.start_logits, start_positions)
             end_loss = loss_fct(outputs.end_logits, end_positions)
 
-            if category is not None:
-                cls_loss = loss_fct(cls_out, category)
+            if pooler_label is not None:
+                cls_loss = loss_fct(cls_out, pooler_label)
                 loss = (start_loss + end_loss + cls_loss) / 3
             else:
                 loss = (start_loss + end_loss) / 2
@@ -134,7 +131,7 @@ if __name__ == "__main__":
     model = BigBirdForNaturalQuestions.from_pretrained(MODEL_ID, gradient_checkpointing=True)
 
     args = TrainingArguments(
-        output_dir="bigbird-nq-output-dir",
+        output_dir="bigbird-nq-complete-tuning",
         overwrite_output_dir=False,
         do_train=True,
         do_eval=True,
@@ -149,15 +146,16 @@ if __name__ == "__main__":
         lr_scheduler_type=SCHEDULER,
         num_train_epochs=MAX_EPOCHS,
         logging_strategy="steps",
-        logging_steps=5,
-        save_strategy="epoch",
-        # save_steps=250,
-        run_name="bigbird-nq",
+        logging_steps=10,
+        save_strategy="steps",
+        save_steps=250,
+        run_name="bigbird-nq-complete-tuning",
         disable_tqdm=False,
         # load_best_model_at_end=True,
         report_to="wandb",
         remove_unused_columns=False,
         fp16=FP16,
+        label_names=["pooler_label", "start_positions", "end_positions"], # it's important to log eval_loss
     )
     print("Batch Size", args.train_batch_size)
     print("Parallel Mode", args.parallel_mode)
