@@ -4,7 +4,7 @@
 
 | Description                                   | Dated          | Link                                                                |
 |-----------------------------------------------|----------------|---------------------------------------------------------------------|
-| 🤗's BigBird on TPUs                          | In progress    | -                                                                   |
+| 🤗's BigBird on TPUs                          | In progress    | [PR #11651](https://github.com/huggingface/transformers/pull/11651) |                                                  
 | Working on porting `BigBird-Pegasus`          | May 7, 2021    | [PR #10991](https://github.com/huggingface/transformers/pull/10991) |
 | Published blog post @ **🤗Blog**              | March 31, 2021 | [Link](https://huggingface.co/blog/big-bird)                        |
 | Ported `BigBird-RoBERTa` @ **🤗Transformers** | March 30, 2021 | [PR #10183](https://github.com/huggingface/transformers/pull/10183) |
