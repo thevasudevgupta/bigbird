@@ -33,7 +33,7 @@ PROCESS_TRAIN=True python3 prepare_nq.py
 PROCESS_TRAIN=False python3 prepare_nq.py
 ```
 
-Above commands will download dataset from 🤗Hub & will prepare it for training. Remember this will download ~100 GB of dataset, so you need to have good internet connection & enough space (~ 250 GB free space). Preparing dataset will take ~ 3 hours.
+Above commands will download dataset from 🤗Hub & will prepare it for training. Remember this will download ~ 100 GB of dataset, so you need to have good internet connection & enough space (~ 250 GB free space). Preparing dataset will take ~ 3 hours.
 
 Now, for distributed training on several GPUs, run the following command:
 
@@ -51,4 +51,4 @@ To see how above checkpoint performs on QA task, checkout this:
 
 ![](assets/infer-bigbird-nq.png)
 
-*Context is just a tweet taken from 🤗 Twitter Handle.*💥💥💥
+*Context is just a tweet taken from 🤗 Twitter Handle. 💥💥💥*
