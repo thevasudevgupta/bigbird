@@ -43,10 +43,9 @@ class FlaxBigBirdForNaturalQuestionsModule(FlaxBigBirdForQuestionAnsweringModule
         self.cls = nn.Dense(5, dtype=self.dtype)
 
     def __call__(self, *args, **kwargs):
-        kwargs["return_dict"] = True
         outputs = super().__call__(*args, **kwargs)
-        cls_out = self.cls(outputs.pooled_output)
-        return outputs.start_logits, outputs.end_logits, cls_out
+        cls_out = self.cls(outputs[2])
+        return outputs[:2] + (cls_out, )
 
 
 class FlaxBigBirdForNaturalQuestions(FlaxBigBirdForQuestionAnswering):
@@ -64,7 +63,7 @@ def calculate_loss_for_nq(
         """
         vocab_size = logits.shape[-1]
         labels = (labels[..., None] == jnp.arange(vocab_size)[None]).astype("f4")
-        logits = jax.nn.log_sigmoid(logits, axis=-1)
+        logits = jax.nn.log_softmax(logits, axis=-1)
         loss = -jnp.sum(labels * logits, axis=-1)
         if reduction is not None:
             loss = reduction(loss)
@@ -81,10 +80,11 @@ def calculate_loss_for_nq(
 class Args:
     model_id: str = "google/bigbird-base-trivia-itc"
     lr: float = 1e-5
-    eval_steps: int = 4
-    save_steps: int = 6
+    eval_steps: int = 8
+    save_steps: int = 8
+    logging_steps: int = 8
 
-    batch_size: int = 8
+    batch_size: int = 1
     max_epochs: int = 2
 
     # tx_args
@@ -95,12 +95,16 @@ class Args:
 
     save_dir: str = "bigbird-roberta-natural-questions"
     base_dir: str = "training-expt"
-    tr_data_path: str = "data/nq-training.jsonl"
+    tr_data_path: str = "data/nq-validation.jsonl"
     val_data_path: str = "data/nq-validation.jsonl"
 
     def __post_init__(self):
-        os.path.mkdir(self.base_dir, exist_ok=True)
+        os.makedirs(self.base_dir, exist_ok=True)
         self.save_dir = os.path.join(self.base_dir, self.save_dir)
+
+        print("#################### AVAILABLE DEVICES ####################")
+        print(jax.devices())
+        print("###########################################################")
 
 
 @dataclass
@@ -111,20 +115,18 @@ class DataCollator:
 
     def __call__(self, batch):
         batch = self.collate_fn(batch)
+        # batch = jax.tree_map(shard, batch)
         return batch
 
     def collate_fn(self, features):
-        input_ids, attention_mask = self.fetch_inputs(
-            [x["input_ids"] for x in features]
-        )
+        input_ids, attention_mask = self.fetch_inputs(features["input_ids"])
         batch = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "start_labels": [x["start_token"] for x in features],
-            "end_labels": [x["end_token"] for x in features],
-            "pooled_labels": [x["category"] for x in features],
+            "input_ids": jnp.array(input_ids, dtype=jnp.int32),
+            "attention_mask": jnp.array(attention_mask, dtype=jnp.int32),
+            "start_labels": jnp.array(features["start_token"], dtype=jnp.int32),
+            "end_labels": jnp.array(features["end_token"], dtype=jnp.int32),
+            "pooled_labels": jnp.array(features["category"], dtype=jnp.int32),
         }
-        batch = jax.tree_map(partial(jnp.array, dtype=jnp.int32), batch)
         return batch
 
     def fetch_inputs(self, input_ids: list):
@@ -139,8 +141,7 @@ class DataCollator:
         return input_ids, attention_mask
 
 
-def get_batched_dataset(file_path, batch_size, seed=None):
-    dataset = load_dataset("json", data_files=file_path)["train"]
+def get_batched_dataset(dataset, batch_size, seed=None):
     num_samples = len(dataset)
     if seed is not None:
         dataset = dataset.shuffle(seed=seed)
@@ -148,18 +149,19 @@ def get_batched_dataset(file_path, batch_size, seed=None):
     dataset = dataset.select(range(num_samples - num_samples % batch_size))
     for i in range(num_samples):
         batch = dataset[i * batch_size : (i + 1) * batch_size]
-        batch = shard(batch)
+        batch = dict(batch)
         yield batch
 
-
+@jax.jit
 def train_step(state, drp_rng, **model_inputs):
+
     def loss_fn(params):
         start_labels = model_inputs.pop("start_labels")
         end_labels = model_inputs.pop("end_labels")
         pooled_labels = model_inputs.pop("pooled_labels")
 
-        outputs = state.apply(
-            **model_inputs, params=params, drp_rng=drp_rng, train=True
+        outputs = state.apply_fn(
+            **model_inputs, params=params, dropout_rng=drp_rng, train=True
         )
         start_logits, end_logits, pooled_logits = outputs
 
@@ -174,17 +176,19 @@ def train_step(state, drp_rng, **model_inputs):
 
     grad_fn = jax.value_and_grad(loss_fn)
     loss, grads = grad_fn(state.params)
+    grads = jax.tree_map(jnp.mean, grads)
     state = state.apply_gradients(grads=grads)
     return state, loss
 
 
+@jax.jit
 def val_step(state, drp_rng, **model_inputs):
     start_labels = model_inputs.pop("start_labels")
     end_labels = model_inputs.pop("end_labels")
     pooled_labels = model_inputs.pop("pooled_labels")
 
-    outputs = state.apply(
-        **model_inputs, params=state.params, drp_rng=drp_rng, train=False
+    outputs = state.apply_fn(
+        **model_inputs, params=state.params, dropout_rng=drp_rng, train=False
     )
     start_logits, end_logits, pooled_logits = outputs
 
@@ -198,8 +202,11 @@ def val_step(state, drp_rng, **model_inputs):
 class Trainer:
     args: Args
     data_collator: Callable
+    model_save_fn: Callable
     train_step_fn: Callable
     val_step_fn: Callable
+    tr_num_samples: int = None
+    val_num_samples: int = None
 
     # def __post_init__(self):
     #     self.training_step = jax.pmap(self.training_step)
@@ -218,9 +225,7 @@ class Trainer:
                 "lr": args.lr,
                 "init_lr": args.init_lr,
                 "warmup_steps": args.warmup_steps,
-                "num_train_steps": calcuate_num_steps(
-                    args.tr_data_path, args.batch_size, args.max_epochs
-                ),
+                "num_train_steps": self.tr_num_samples // args.batch_size,
                 "weight_decay": args.weight_decay,
             }
             tx = build_tx(**tx_args)
@@ -236,48 +241,55 @@ class Trainer:
             model.params = params
         return state
 
-    def train(self, state, save_fn):
+    def train(self, state, tr_dataset, val_dataset):
         args = self.args
-        val_dataset = get_batched_dataset(args.val_data_path, args.batch_size)
+        val_dataloader = get_batched_dataset(val_dataset, args.batch_size)
+        total = self.tr_num_samples // args.batch_size
 
-        for epoch in args.max_epochs:
+        drp_rng = jax.random.PRNGKey(0)
+        for epoch in range(args.max_epochs):
             running_loss = jnp.array(0, dtype=jnp.float32)
-            tr_dataset = get_batched_dataset(
-                args.tr_data_path, args.batch_size, seed=epoch
-            )
-            for batch in tqdm(tr_dataset, desc=f"Running EPOCH-{epoch}"):
+            tr_dataloader = get_batched_dataset(tr_dataset, args.batch_size, seed=epoch)
+            for batch in tqdm(tr_dataloader, total=total, desc=f"Running EPOCH-{epoch}"):
                 batch = self.data_collator(batch)
-                state, loss = self.train_step_fn(state, batch)
+                state, loss = self.train_step_fn(state, drp_rng, **batch)
                 running_loss += loss
                 tr_loss = running_loss / (state.step + 1)
 
+                eval_loss = None
                 if state.step % args.eval_steps == 0:
-                    eval_loss = self.evaluate(state, val_dataset)
+                    eval_loss = self.evaluate(state, drp_rng, val_dataloader)
+
+                if state.step % args.logging_steps == 0:
+                    print("############### LOGGING ###############")
+                    print(dict(tr_loss=tr_loss, eval_loss=eval_loss))
+                    print("#######################################")
 
                 if state.step % args.save_steps == 0:
-                    print("SAVING MODEL AFTER STEP:", state.step, end="... ")
-                    save_fn(args.save_dir + f"-epoch-{epoch}", params=state.params)
-                    print("DONE")
+                    self.save_checkpoint(args.save_dir + f"-epoch-{epoch}", state=state)
 
         return tr_loss, eval_loss
 
-    def evaluate(self, state, drp_rng, dataset):
+    def evaluate(self, state, drp_rng, dataloader):
+        total = self.val_num_samples // self.args.batch_size
         running_loss = jnp.array(0, dtype=jnp.float32)
-        for i, batch in tqdm(enumerate(dataset), desc="Evaluating ... "):
+        i = 0
+        for batch in tqdm(dataloader, total=total, desc="Evaluating ... "):
             batch = self.data_collator(batch)
             loss = self.val_step_fn(state, drp_rng, **batch)
             running_loss += loss
+            i += 1
         return running_loss / (i + 1)
 
     def save_checkpoint(self, save_dir, state):
         print(f"SAVING CHECKPOINT IN {save_dir}", end=" ... ")
-        self.model.save_pretrained(save_dir, params=state.params)
+        self.model_save_fn(save_dir, params=state.params)
         with open(os.path.join(save_dir, "opt_state.msgpack"), "wb") as f:
             f.write(to_bytes(state.opt_state))
         joblib.dump(args, os.path.join(save_dir, "args.joblib"))
         joblib.dump(self.data_collator, os.path.join(save_dir, "data_collator.joblib"))
         with open(os.path.join(save_dir, "training_state.json"), "w") as f:
-            json.dump({"step": state.step}, f)
+            json.dump({"step": state.step.item()}, f)
         print("DONE")
 
 
@@ -302,7 +314,7 @@ def restore_checkpoint(save_dir, state):
 
 def build_tx(lr, init_lr, warmup_steps, num_train_steps, weight_decay):
     def weight_decay_mask(params):
-        params = traverse_util.unflatten(params)
+        params = traverse_util.flatten_dict(params)
         mask = {
             k: (v[-1] != "bias" and v[-2:] != ("LayerNorm", "scale"))
             for k, v in params.items()
@@ -325,39 +337,37 @@ def build_tx(lr, init_lr, warmup_steps, num_train_steps, weight_decay):
     )
 
 
-def calcuate_num_steps(data_path, batch_size, max_epochs):
-    steps = 0
-    for _ in get_batched_dataset(data_path, batch_size):
-        steps += 1
-    return steps * max_epochs
-
-
 if __name__ == "__main__":
     args = Args()
     print(args)
+    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"].select(range(8)) # TODO
+    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"].select(range(8))
 
-    model = FlaxBigBirdForQuestionAnswering.from_pretrained(args.model_id)
+    model = FlaxBigBirdForNaturalQuestions.from_pretrained(args.model_id)
     tokenizer = BigBirdTokenizerFast.from_pretrained(args.model_id)
     data_collator = DataCollator(pad_id=tokenizer.pad_token_id, max_length=4096)
 
     trainer = Trainer(
         args=args,
         data_collator=data_collator,
+        model_save_fn=model.save_pretrained,
         train_step_fn=train_step,
         val_step_fn=val_step,
+        tr_num_samples=len(tr_dataset),
+        val_num_samples=len(val_dataset),
     )
 
-    num_steps = calcuate_num_steps(args.tr_data_path, args.batch_size, args.max_epochs)
     tx_args = {
         "lr": args.lr,
         "init_lr": args.init_lr,
         "warmup_steps": args.warmup_steps,
-        "num_train_steps": num_steps,
+        "num_train_steps": args.max_epochs * (len(tr_dataset) // args.batch_size),
         "weight_decay": args.weight_decay,
     }
     tx = build_tx(**tx_args)
 
-    state = trainer.create_state(model, tx, ckpt_dir=None)
-    trainer.train(state, save_fn=model.save_pretrained)
+    ckpt_dir = None # "training-expt/bigbird-roberta-natural-questions-epoch-0"
+    state = trainer.create_state(model, tx, ckpt_dir=ckpt_dir)
+    trainer.train(state, tr_dataset, val_dataset)
 
     model.save_pretrained(args.save_dir, params=state.params)

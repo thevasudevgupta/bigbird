@@ -9,6 +9,7 @@ wandb/
 important/
 bigbird-nq-output-dir/
 data-1024-stride/
+training-expt/
 
 # C extensions
 *.so
