@@ -1,49 +1,53 @@
 # TRAIN_ON_SMALL=True python3 -m torch.distributed.launch --nproc_per_node=2 train_nq.py
 
-from transformers import BigBirdForQuestionAnswering, BigBirdTokenizer
-from transformers import TrainingArguments, Trainer
+import os
+
+import numpy as np
+import torch
+import torch.nn as nn
+import wandb
 from datasets import load_dataset
 
 import torch_xla.distributed.xla_multiprocessing as xmp
-
-import torch
-import torch.nn as nn
-import numpy as np
-
-import wandb
-import os
-
-os.environ['WANDB_WATCH'] = "false"
-os.environ['WANDB_PROJECT'] = "bigbird-tpu"
-TRAIN_ON_SMALL = eval(os.environ.pop("TRAIN_ON_SMALL", "False"))
-
 from params import (
-    SCHEDULER,
-    WARMUP_STEPS,
-    MODEL_ID,
-    SEED,
+    FP16,
     GROUP_BY_LENGTH,
     LEARNING_RATE,
     MAX_EPOCHS,
-    FP16,
+    MODEL_ID,
+    SCHEDULER,
+    SEED,
+    WARMUP_STEPS,
 )
+from transformers import (
+    BigBirdForQuestionAnswering,
+    BigBirdTokenizer,
+    Trainer,
+    TrainingArguments,
+)
+
+os.environ["WANDB_WATCH"] = "false"
+os.environ["WANDB_PROJECT"] = "bigbird-tpu"
+TRAIN_ON_SMALL = eval(os.environ.pop("TRAIN_ON_SMALL", "False"))
+
 
 RESUME_TRAINING = None
 
+
 def collate_fn(features, pad_id=0, threshold=1024):
     def pad_elems(ls, pad_id, maxlen):
-        while len(ls)<maxlen:
+        while len(ls) < maxlen:
             ls.append(pad_id)
         return ls
 
     # maxlen = max([len(x['input_ids']) for x in features])
-    maxlen = 4096 # TPU static-padding
+    maxlen = 4096  # TPU static-padding
     # avoid attention_type switching
     # if maxlen < threshold:
     #     maxlen = threshold
 
     # dynamic padding
-    input_ids = [pad_elems(x['input_ids'], pad_id, maxlen) for x in features]
+    input_ids = [pad_elems(x["input_ids"], pad_id, maxlen) for x in features]
     input_ids = torch.tensor(input_ids, dtype=torch.long)
 
     # padding mask
@@ -54,19 +58,31 @@ def collate_fn(features, pad_id=0, threshold=1024):
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
-        "start_positions": torch.tensor([x['start_token'] for x in features], dtype=torch.long),
-        "end_positions": torch.tensor([x['end_token'] for x in features], dtype=torch.long),
+        "start_positions": torch.tensor(
+            [x["start_token"] for x in features], dtype=torch.long
+        ),
+        "end_positions": torch.tensor(
+            [x["end_token"] for x in features], dtype=torch.long
+        ),
         "pooler_label": torch.tensor([x["category"] for x in features]),
     }
 
 
 class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
-    """ BigBirdForQuestionAnswering with CLS Head over the top for predicting category """
+    """BigBirdForQuestionAnswering with CLS Head over the top for predicting category"""
+
     def __init__(self, config):
         super().__init__(config, add_pooling_layer=True)
         self.cls = nn.Linear(config.hidden_size, 5)
 
-    def forward(self, input_ids, attention_mask=None, start_positions=None, end_positions=None, pooler_label=None):
+    def forward(
+        self,
+        input_ids,
+        attention_mask=None,
+        start_positions=None,
+        end_positions=None,
+        pooler_label=None,
+    ):
 
         outputs = super().forward(input_ids, attention_mask=attention_mask)
         cls_out = self.cls(outputs.pooler_output)
@@ -100,8 +116,8 @@ class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
 def main():
 
     # "nq-training.jsonl" & "nq-validation.jsonl" are obtained from running `prepare_nq.py`
-    tr_dataset = load_dataset("json", data_files="data/nq-validation.jsonl")['train']
-    val_dataset = load_dataset("json", data_files="data/nq-validation.jsonl")['train']
+    tr_dataset = load_dataset("json", data_files="data/nq-validation.jsonl")["train"]
+    val_dataset = load_dataset("json", data_files="data/nq-validation.jsonl")["train"]
 
     if TRAIN_ON_SMALL:
         # this will run for ~1 day
@@ -115,7 +131,9 @@ def main():
     print(tr_dataset, val_dataset)
 
     tokenizer = BigBirdTokenizer.from_pretrained(MODEL_ID)
-    model = BigBirdForNaturalQuestions.from_pretrained(MODEL_ID, gradient_checkpointing=False)
+    model = BigBirdForNaturalQuestions.from_pretrained(
+        MODEL_ID, gradient_checkpointing=False
+    )
 
     args = TrainingArguments(
         output_dir="bigbird-nq-complete-tuning",
@@ -143,7 +161,11 @@ def main():
         report_to="wandb",
         remove_unused_columns=False,
         fp16=FP16,
-        label_names=["pooler_label", "start_positions", "end_positions"], # it's important to log eval_loss
+        label_names=[
+            "pooler_label",
+            "start_positions",
+            "end_positions",
+        ],  # it's important to log eval_loss
     )
     print("Batch Size", args.train_batch_size)
     print("Parallel Mode", args.parallel_mode)
@@ -162,8 +184,10 @@ def main():
         trainer.save_model("interrupted-natural-questions")
     wandb.finish()
 
+
 def _mp_fn(index):
     main()
+
 
 if __name__ == "__main__":
     # xmp.spawn(_mp_fn, args=()) # not working right now :(
