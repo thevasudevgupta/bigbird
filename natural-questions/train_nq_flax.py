@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import dataclass
 from functools import partial
@@ -6,21 +7,19 @@ from typing import Callable
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import joblib
 import optax
 from datasets import load_dataset
-from flax import struct, traverse_util
+from flax import traverse_util
+from flax.serialization import from_bytes, to_bytes
 from flax.training import train_state
 from flax.training.common_utils import shard
 from tqdm.auto import tqdm
 
-from transformers import (
-    BigBirdConfig,
-    BigBirdTokenizerFast,
-    FlaxBigBirdForQuestionAnswering,
-)
-from transformers.models.big_bird.modeling_flax_big_bird import (
-    FlaxBigBirdForQuestionAnsweringModule,
-)
+from transformers import (BigBirdConfig, BigBirdTokenizerFast,
+                          FlaxBigBirdForQuestionAnswering)
+from transformers.models.big_bird.modeling_flax_big_bird import \
+    FlaxBigBirdForQuestionAnsweringModule
 
 ##########################################################
 # How can we inherit from HuggingFace Flax Transformers?
@@ -202,15 +201,39 @@ class Trainer:
     train_step_fn: Callable
     val_step_fn: Callable
 
-    def __post_init__(self):
-        self.training_step = jax.pmap(self.training_step)
-        self.validation_step = jax.pmap(self.validation_step)
+    # def __post_init__(self):
+    #     self.training_step = jax.pmap(self.training_step)
+    #     self.validation_step = jax.pmap(self.validation_step)
 
-    def create_state(self, model, tx):
+    def create_state(self, model, tx, ckpt_dir=None):
         params = model.params
         state = train_state.TrainState.create(
             apply_fn=model.__call__, params=params, tx=tx
         )
+        if ckpt_dir is not None:
+            params, opt_state, step, args, data_collator = restore_checkpoint(
+                ckpt_dir, state
+            )
+            tx_args = {
+                "lr": args.lr,
+                "init_lr": args.init_lr,
+                "warmup_steps": args.warmup_steps,
+                "num_train_steps": calcuate_num_steps(
+                    args.tr_data_path, args.batch_size, args.max_epochs
+                ),
+                "weight_decay": args.weight_decay,
+            }
+            tx = build_tx(**tx_args)
+            state = train_state.TrainState(
+                step=step,
+                apply_fn=model.__call__,
+                params=params,
+                tx=tx,
+                opt_state=opt_state,
+            )
+            self.args = args
+            self.data_collator = data_collator
+            model.params = params
         return state
 
     def train(self, state, save_fn):
@@ -245,6 +268,36 @@ class Trainer:
             loss = self.val_step_fn(state, drp_rng, **batch)
             running_loss += loss
         return running_loss / (i + 1)
+
+    def save_checkpoint(self, save_dir, state):
+        print(f"SAVING CHECKPOINT IN {save_dir}", end=" ... ")
+        self.model.save_pretrained(save_dir, params=state.params)
+        with open(os.path.join(save_dir, "opt_state.msgpack"), "wb") as f:
+            f.write(to_bytes(state.opt_state))
+        joblib.dump(args, os.path.join(save_dir, "args.joblib"))
+        joblib.dump(self.data_collator, os.path.join(save_dir, "data_collator.joblib"))
+        with open(os.path.join(save_dir, "training_state.json"), "w") as f:
+            json.dump({"step": state.step}, f)
+        print("DONE")
+
+
+def restore_checkpoint(save_dir, state):
+    print(f"RESTORING CHECKPOINT FROM {save_dir}", end=" ... ")
+    with open(os.path.join(save_dir, "flax_model.msgpack"), "rb") as f:
+        params = from_bytes(state.params, f.read())
+
+    with open(os.path.join(save_dir, "opt_state.msgpack"), "rb") as f:
+        opt_state = from_bytes(state.opt_state, f.read())
+
+    args = joblib.load(os.path.join(save_dir, "args.joblib"))
+    data_collator = joblib.load(os.path.join(save_dir, "data_collator.joblib"))
+
+    with open(os.path.join(save_dir, "training_state.json"), "r") as f:
+        training_state = json.load(f)
+    step = training_state["step"]
+
+    print("DONE")
+    return params, opt_state, step, args, data_collator
 
 
 def build_tx(lr, init_lr, warmup_steps, num_train_steps, weight_decay):
@@ -285,8 +338,8 @@ if __name__ == "__main__":
 
     model = FlaxBigBirdForQuestionAnswering.from_pretrained(args.model_id)
     tokenizer = BigBirdTokenizerFast.from_pretrained(args.model_id)
-
     data_collator = DataCollator(pad_id=tokenizer.pad_token_id, max_length=4096)
+
     trainer = Trainer(
         args=args,
         data_collator=data_collator,
@@ -302,9 +355,9 @@ if __name__ == "__main__":
         "num_train_steps": num_steps,
         "weight_decay": args.weight_decay,
     }
-    tx = build_tx(**args.tx_args)
+    tx = build_tx(**tx_args)
 
-    state = trainer.create_state(model, tx)
+    state = trainer.create_state(model, tx, ckpt_dir=None)
     trainer.train(state, save_fn=model.save_pretrained)
 
     model.save_pretrained(args.save_dir, params=state.params)
