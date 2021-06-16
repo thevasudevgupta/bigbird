@@ -83,17 +83,17 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    eval_steps: int = 8
-    save_steps: int = 8
-    logging_steps: int = 8
+    eval_steps: int = 4
+    save_steps: int = 6
+    logging_steps: int = 4
 
     batch_size_per_device: int = 1
-    max_epochs: int = 2
+    max_epochs: int = 3
 
     # tx_args
     lr: float = 1e-4
     init_lr: float = 0.0
-    warmup_steps: int = 10
+    warmup_steps: int = 4
     weight_decay: float = 1e-3
 
     save_dir: str = "bigbird-roberta-natural-questions"
@@ -146,12 +146,9 @@ class DataCollator:
 
 
 def get_batched_dataset(dataset, batch_size, seed=None):
-    num_samples = len(dataset)
     if seed is not None:
         dataset = dataset.shuffle(seed=seed)
-    # dropping last batch
-    dataset = dataset.select(range(num_samples - num_samples % batch_size))
-    for i in range(num_samples):
+    for i in range(len(dataset) // batch_size):
         batch = dataset[i * batch_size : (i + 1) * batch_size]
         yield dict(batch)
 
@@ -261,20 +258,21 @@ class Trainer:
                 batch = self.data_collator(batch)
                 state, metrics, drp_rng = self.train_step_fn(state, drp_rng, **batch)
                 drp_rng = jax.random.split(drp_rng[0], jax.device_count())
-                running_loss += metrics["loss"]
+                running_loss += metrics["loss"][0]
+                state_step = state.step[0]
 
                 eval_loss = None
-                if state.step % args.eval_steps == 0:
+                if state_step % args.eval_steps == 0:
                     eval_loss = self.evaluate(state, val_dataloader)
 
-                if state.step % args.logging_steps == 0:
-                    tr_loss = running_loss / (state.step + 1)
+                if state_step % args.logging_steps == 0:
+                    tr_loss = running_loss / (state_step + 1)
                     print("############### LOGGING ###############")
-                    lr = self.scheduler_fn(state.step - 1)
+                    lr = self.scheduler_fn(state_step - 1)
                     print(dict(tr_loss=tr_loss, eval_loss=eval_loss, lr=lr))
                     print("#######################################")
 
-                if state.step % args.save_steps == 0:
+                if state_step % args.save_steps == 0:
                     self.save_checkpoint(args.save_dir + f"-epoch-{epoch}", state=state)
 
         return tr_loss, eval_loss
@@ -286,11 +284,12 @@ class Trainer:
         for batch in tqdm(dataloader, total=total, desc="Evaluating ... "):
             batch = self.data_collator(batch)
             metrics = self.val_step_fn(state, **batch)
-            running_loss += metrics["loss"]
+            running_loss += metrics["loss"][0]
             i += 1
         return running_loss / (i + 1)
 
     def save_checkpoint(self, save_dir, state):
+        state = jax_utils.unreplicate(state)
         print(f"SAVING CHECKPOINT IN {save_dir}", end=" ... ")
         self.model_save_fn(save_dir, params=state.params)
         with open(os.path.join(save_dir, "opt_state.msgpack"), "wb") as f:
@@ -356,8 +355,11 @@ if __name__ == "__main__":
     args = Args()
     print(args)
 
-    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"].select(range(10)) # TODO
-    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"].select(range(10))
+    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"].select(range(320)) # TODO
+    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"].select(range(80))
+
+    print(tr_dataset)
+    print(val_dataset)
 
     model = FlaxBigBirdForNaturalQuestions.from_pretrained(args.model_id)
     tokenizer = BigBirdTokenizerFast.from_pretrained(args.model_id)
@@ -390,7 +392,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Oooops; TRAINING STOPPED UNFORTUNATELY")    
         print("SAVING WEIGHTS IN `final-weights`")
-        model.save_pretrained(os.path.join(args.base_dir, "final-weights"), params=state.params)
+        params = jax_utils.unreplicate(state.params)
+        model.save_pretrained(os.path.join(args.base_dir, "final-weights"), params=params)
 
     print("SAVING WEIGHTS IN `final-weights`")
-    model.save_pretrained(os.path.join(args.base_dir, "final-weights"), params=state.params)
+    params = jax_utils.unreplicate(state.params)
+    model.save_pretrained(os.path.join(args.base_dir, "final-weights"), params=params)
