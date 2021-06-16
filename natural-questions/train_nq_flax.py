@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Callable
 
+import numpy as np
+import wandb
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -83,22 +85,22 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    eval_steps: int = 4
+    eval_steps: int = 20
     save_steps: int = 6
-    logging_steps: int = 4
+    logging_steps: int = 2
 
     batch_size_per_device: int = 1
-    max_epochs: int = 3
+    max_epochs: int = 2
 
     # tx_args
     lr: float = 1e-4
     init_lr: float = 0.0
-    warmup_steps: int = 4
+    warmup_steps: int = 100
     weight_decay: float = 1e-3
 
     save_dir: str = "bigbird-roberta-natural-questions"
     base_dir: str = "training-expt"
-    tr_data_path: str = "data/nq-validation.jsonl"
+    tr_data_path: str = "data/nq-training.jsonl"
     val_data_path: str = "data/nq-validation.jsonl"
 
     def __post_init__(self):
@@ -209,6 +211,7 @@ class Trainer:
     model_save_fn: Callable
     train_step_fn: Callable
     val_step_fn: Callable
+    logger: wandb
     tr_num_samples: int = None
     val_num_samples: int = None
     scheduler_fn: Callable = None
@@ -247,7 +250,7 @@ class Trainer:
     def train(self, state, tr_dataset, val_dataset):
         args = self.args
         val_dataloader = get_batched_dataset(val_dataset, args.batch_size)
-        total = self.tr_num_samples // args.batch_size
+        total = len(tr_dataset) // args.batch_size
 
         rng = jax.random.PRNGKey(0)
         drp_rng = jax.random.split(rng, jax.device_count())
@@ -257,9 +260,8 @@ class Trainer:
             for batch in tqdm(tr_dataloader, total=total, desc=f"Running EPOCH-{epoch}"):
                 batch = self.data_collator(batch)
                 state, metrics, drp_rng = self.train_step_fn(state, drp_rng, **batch)
-                drp_rng = jax.random.split(drp_rng[0], jax.device_count())
-                running_loss += metrics["loss"][0]
-                state_step = state.step[0]
+                running_loss += jax_utils.unreplicate(metrics["loss"])
+                state_step = jax_utils.unreplicate(state.step)
 
                 eval_loss = None
                 if state_step % args.eval_steps == 0:
@@ -267,10 +269,12 @@ class Trainer:
 
                 if state_step % args.logging_steps == 0:
                     tr_loss = running_loss / (state_step + 1)
-                    print("############### LOGGING ###############")
+                    tqdm.write("############### LOGGING ###############")
                     lr = self.scheduler_fn(state_step - 1)
-                    print(dict(tr_loss=tr_loss, eval_loss=eval_loss, lr=lr))
-                    print("#######################################")
+                    logging_dict = dict(tr_loss=tr_loss.item(), eval_loss=eval_loss.item(), lr=lr.item(), step=state_step.item())
+                    tqdm.write(str(logging_dict))
+                    self.logger.log(logging_dict)
+                    tqdm.write("#######################################")
 
                 if state_step % args.save_steps == 0:
                     self.save_checkpoint(args.save_dir + f"-epoch-{epoch}", state=state)
@@ -355,8 +359,16 @@ if __name__ == "__main__":
     args = Args()
     print(args)
 
-    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"].select(range(320)) # TODO
-    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"].select(range(80))
+    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"].select(range(512)) # TODO
+    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"].select(range(16))
+
+    if os.environ.get("TRAIN_ON_SMALL", "FALSE") == "TRUE":
+        np.random.seed(SEED)
+        indices = np.random.randint(0, 298152, size=8000)
+        tr_dataset = tr_dataset.select(indices)
+        np.random.seed(SEED)
+        indices = np.random.randint(0, 9000, size=1000)
+        val_dataset = val_dataset.select(indices)
 
     print(tr_dataset)
     print(val_dataset)
@@ -374,14 +386,16 @@ if __name__ == "__main__":
     }
     tx, lr = build_tx(**tx_args)
 
+    logger = wandb.init(project="bigbird-natural-questions", config=args.__dict__)
     trainer = Trainer(
         args=args,
         data_collator=data_collator,
         model_save_fn=model.save_pretrained,
         train_step_fn=train_step,
         val_step_fn=val_step,
-        tr_num_samples=len(tr_dataset) - len(tr_dataset) % args.batch_size,
-        val_num_samples=len(val_dataset) - len(val_dataset) % args.batch_size,
+        logger=logger,
+        tr_num_samples=len(tr_dataset),
+        val_num_samples=len(val_dataset),
         scheduler_fn=lr,
     )
 
@@ -390,10 +404,7 @@ if __name__ == "__main__":
     try:
         trainer.train(state, tr_dataset, val_dataset)
     except KeyboardInterrupt:
-        print("Oooops; TRAINING STOPPED UNFORTUNATELY")    
-        print("SAVING WEIGHTS IN `final-weights`")
-        params = jax_utils.unreplicate(state.params)
-        model.save_pretrained(os.path.join(args.base_dir, "final-weights"), params=params)
+        print("Oooops; TRAINING STOPPED UNFORTUNATELY")
 
     print("SAVING WEIGHTS IN `final-weights`")
     params = jax_utils.unreplicate(state.params)
