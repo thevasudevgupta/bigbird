@@ -85,12 +85,12 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    eval_steps: int = 20
-    save_steps: int = 6
-    logging_steps: int = 2
+    eval_steps: int = 512
+    save_steps: int = 512
+    logging_steps: int = 512
 
     batch_size_per_device: int = 1
-    max_epochs: int = 2
+    max_epochs: int = 3
 
     # tx_args
     lr: float = 1e-4
@@ -271,7 +271,9 @@ class Trainer:
                     tr_loss = running_loss / (state_step + 1)
                     tqdm.write("############### LOGGING ###############")
                     lr = self.scheduler_fn(state_step - 1)
-                    logging_dict = dict(tr_loss=tr_loss.item(), eval_loss=eval_loss.item(), lr=lr.item(), step=state_step.item())
+                    logging_dict = dict(tr_loss=tr_loss.item(), lr=lr.item(), step=state_step.item())
+                    if eval_loss is not None:
+                        logging_dict["eval_loss"] = eval_loss.item()
                     tqdm.write(str(logging_dict))
                     self.logger.log(logging_dict)
                     tqdm.write("#######################################")
@@ -359,14 +361,14 @@ if __name__ == "__main__":
     args = Args()
     print(args)
 
-    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"].select(range(512)) # TODO
-    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"].select(range(16))
+    tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"]
+    val_dataset = load_dataset("json", data_files=args.val_data_path)["train"]
 
     if os.environ.get("TRAIN_ON_SMALL", "FALSE") == "TRUE":
-        np.random.seed(SEED)
+        np.random.seed(0)
         indices = np.random.randint(0, 298152, size=8000)
         tr_dataset = tr_dataset.select(indices)
-        np.random.seed(SEED)
+        np.random.seed(0)
         indices = np.random.randint(0, 9000, size=1000)
         val_dataset = val_dataset.select(indices)
 
