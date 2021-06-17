@@ -85,17 +85,17 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    eval_steps: int = 512 # same to logging steps
-    save_steps: int = 512
+    logging_steps: int = 2000
+    save_steps: int = 10500
 
     batch_size_per_device: int = 1
-    max_epochs: int = 3
+    max_epochs: int = 5
 
     # tx_args
     lr: float = 1e-4
     init_lr: float = 0.0
-    warmup_steps: int = 100
-    weight_decay: float = 1e-3
+    warmup_steps: int = 3000
+    weight_decay: float = 1e-2
 
     save_dir: str = "bigbird-roberta-natural-questions"
     base_dir: str = "training-expt"
@@ -262,23 +262,23 @@ class Trainer:
                 state, metrics, drp_rng = self.train_step_fn(state, drp_rng, **batch)
                 running_loss += jax_utils.unreplicate(metrics["loss"])
                 i += 1
-                if i % args.eval_steps == 0:
+                if i % args.logging_steps == 0:
                     state_step = jax_utils.unreplicate(state.step)
-                    eval_loss = self.evaluate(state, val_dataloader)
                     tr_loss = running_loss.item() / i
 
-                    tqdm.write("############### LOGGING ###############")
                     lr = self.scheduler_fn(state_step - 1)
-                    logging_dict = dict(tr_loss=tr_loss, lr=lr.item(), eval_loss=eval_loss.item(), step=state_step.item())
+                    logging_dict = dict(step=state_step.item(), tr_loss=tr_loss, lr=lr.item())
 
                     tqdm.write(str(logging_dict))
-                    self.logger.log(logging_dict)
-                    tqdm.write("#######################################")
+                    self.logger.log(logging_dict, commit=True)
 
-                if state_step % args.save_steps == 0:
-                    self.save_checkpoint(args.save_dir + f"-epoch-{epoch}", state=state)
+                if i % args.save_steps == 0:
+                    self.save_checkpoint(args.save_dir + f"-e{epoch}-s{i}", state=state)
 
-        return tr_loss, eval_loss
+            eval_loss = self.evaluate(state, val_dataloader)
+            logging_dict = {"eval_loss": eval_loss.item(), "epoch": epoch}
+            self.logger.log(logging_dict, commit=False)
+            print(logging_dict)
 
     def evaluate(self, state, dataloader):
         total = self.val_num_samples // self.args.batch_size
