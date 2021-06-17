@@ -85,9 +85,8 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    eval_steps: int = 512
+    eval_steps: int = 512 # same to logging steps
     save_steps: int = 512
-    logging_steps: int = 512
 
     batch_size_per_device: int = 1
     max_epochs: int = 3
@@ -257,23 +256,21 @@ class Trainer:
         for epoch in range(args.max_epochs):
             running_loss = jnp.array(0, dtype=jnp.float32)
             tr_dataloader = get_batched_dataset(tr_dataset, args.batch_size, seed=epoch)
+            i = 0
             for batch in tqdm(tr_dataloader, total=total, desc=f"Running EPOCH-{epoch}"):
                 batch = self.data_collator(batch)
                 state, metrics, drp_rng = self.train_step_fn(state, drp_rng, **batch)
                 running_loss += jax_utils.unreplicate(metrics["loss"])
-                state_step = jax_utils.unreplicate(state.step)
-
-                eval_loss = None
-                if state_step % args.eval_steps == 0:
+                i += 1
+                if i % args.eval_steps == 0:
+                    state_step = jax_utils.unreplicate(state.step)
                     eval_loss = self.evaluate(state, val_dataloader)
+                    tr_loss = running_loss.item() / i
 
-                if state_step % args.logging_steps == 0:
-                    tr_loss = running_loss / (state_step + 1)
                     tqdm.write("############### LOGGING ###############")
                     lr = self.scheduler_fn(state_step - 1)
-                    logging_dict = dict(tr_loss=tr_loss.item(), lr=lr.item(), step=state_step.item())
-                    if eval_loss is not None:
-                        logging_dict["eval_loss"] = eval_loss.item()
+                    logging_dict = dict(tr_loss=tr_loss, lr=lr.item(), eval_loss=eval_loss.item(), step=state_step.item())
+
                     tqdm.write(str(logging_dict))
                     self.logger.log(logging_dict)
                     tqdm.write("#######################################")
@@ -290,9 +287,9 @@ class Trainer:
         for batch in tqdm(dataloader, total=total, desc="Evaluating ... "):
             batch = self.data_collator(batch)
             metrics = self.val_step_fn(state, **batch)
-            running_loss += metrics["loss"][0]
+            running_loss += jax_utils.unreplicate(metrics["loss"])
             i += 1
-        return running_loss / (i + 1)
+        return running_loss / i
 
     def save_checkpoint(self, save_dir, state):
         state = jax_utils.unreplicate(state)
