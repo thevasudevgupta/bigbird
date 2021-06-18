@@ -3,8 +3,8 @@ datasets
 sentencepiece
 wandb
 tensorboard
-# torch
-# flax
+torch
+flax
 # jax
 # jaxlib
 apache_beam

@@ -1,51 +1,80 @@
 # BigBird
 
-This repositary is tracking all my work related to porting [Google's BigBird](https://github.com/google-research/bigbird) to 🤗Transformers. I also trained 🤗's `BigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [Big Bird: Transformers for Longer Sequences](https://arxiv.org/abs/2007.14062). This repositary hosts those scripts as well!!
+This repositary is tracking all my work related to porting [**Google's BigBird**](https://github.com/google-research/bigbird) to **🤗 Transformers**. I also trained 🤗's `BigBirdModel` & `FlaxBigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [**Big Bird: Transformers for Longer Sequences**](https://arxiv.org/abs/2007.14062). This repositary hosts those scripts as well!!
+
+Do check the following notebooks for diving deeper into using 🤗 BigBird:
+
+| Description   | Notebook |
+|---------------|----------|
+| `Flax BigBird` evaluation on natural-questions dataset | <a href="https://colab.research.google.com/github/vasudevgupta7/bigbird/blob/main/notebooks/evaluate-flax-natural-questions.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a> |
+| `PyTorch BigBird` evaluation on natural-questions dataset | <a href="https://colab.research.google.com/github/vasudevgupta7/bigbird/blob/main/notebooks/evaluate-torch-natural-questions.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a> |
+| `PyTorch BigBirdPegasus` evaluation on PubMed dataset | <a href="https://colab.research.google.com/github/vasudevgupta7/bigbird/blob/main/notebooks/bigbird_pegasus_evaluation.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a> |
+| How to use 🤗's BigBird (RoBERTa & Pegasus) for inference | <a href="https://colab.research.google.com/github/vasudevgupta7/bigbird/blob/main/notebooks/bigbird-inference.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a> |
+
 
 ## Updates @ 🤗
 
-| Description                                               | Dated          | Link                                                                |
-|-----------------------------------------------------------|----------------|---------------------------------------------------------------------|
-| Added **Flax/Jax** `BigBird-RoBERTa` @ **🤗Transformers** | In Progress    | [PR #11967](https://github.com/huggingface/transformers/pull/11967) |                                             
-| Added **PyTorch** `BigBird-Pegasus` @ **🤗Transformers**  | May 7, 2021    | [PR #10991](https://github.com/huggingface/transformers/pull/10991) |
+| Description                | Dated                | Link                |
+|----------------------------|----------------------|---------------------|
+| Script for training `FlaxBigBird` (with QA heads) on **natural-questions** | In progress | [PR #12233](https://github.com/huggingface/transformers/pull/12233) |
+| Added **Flax/Jax** `BigBird-RoBERTa` to **🤗Transformers** | June 15, 2021  | [PR #11967](https://github.com/huggingface/transformers/pull/11967) |                                             
+| Added **PyTorch** `BigBird-Pegasus` to **🤗Transformers**  | May 7, 2021    | [PR #10991](https://github.com/huggingface/transformers/pull/10991) |
 | Published blog post @ **🤗Blog**                          | March 31, 2021 | [Link](https://huggingface.co/blog/big-bird)                        |
-| Added **PyTorch** `BigBird-RoBERTa` @ **🤗Transformers**  | March 30, 2021 | [PR #10183](https://github.com/huggingface/transformers/pull/10183) |
+| Added **PyTorch** `BigBird-RoBERTa` to **🤗Transformers**  | March 30, 2021 | [PR #10183](https://github.com/huggingface/transformers/pull/10183) |
+
 
 ## Training BigBird
 
-**Training on [`natural-questions`](https://huggingface.co/datasets/natural_questions) dataset**
+I have trained BigBird on [`natural-questions`](https://huggingface.co/datasets/natural_questions) dataset. This dataset takes around 100 GB space on disk. Before diving deeper into scripts, let's setup the system using following commands:
 
 ```shell
-# switch to natural-questions specific directory
-cd natural-questions
+# clone my repositary
+git clone https://github.com/vasudevgupta7/bigbird
 
 # install requirements
 pip3 install -r requirements.txt
+
+# switch to natural-questions specific directory
+cd natural-questions
 ```
 
-For preparing the dataset for training, run the following commands:
+Now that your system is ready, let's preprocess & prepare the dataset for training. Just run following commands:
 
 ```shell
-# this will download ~ 100 GB dataset from 🤗Hub & prepare training data in `data/nq-training.jsonl`
+# this will download ~ 100 GB dataset from 🤗 Hub & prepare training data in `data/nq-training.jsonl`
 PROCESS_TRAIN=True python3 prepare_nq.py
 
 # for preparing validation data in `data/nq-validation.jsonl`
 PROCESS_TRAIN=False python3 prepare_nq.py
 ```
 
-Above commands will download dataset from 🤗Hub & will prepare it for training. Remember this will download ~ 100 GB of dataset, so you need to have good internet connection & enough space (~ 250 GB free space). Preparing dataset will take ~ 3 hours.
+Above commands will first download dataset from 🤗 Hub & then will prepare it for training. Remember this will download ~ 100 GB of dataset, so you need to have good internet connection & enough space (~ 250 GB free space). Preparing dataset will take ~ 3 hours.
 
-Now, for distributed training on several GPUs, run the following command:
+Now that you have prepared the dataset, let's start training. You have 2 options here:
+
+1. Train PyTorch version of BigBird with 🤗 Trainer
+2. Train FlaxBigBird with custom training loop
+
+**PyTorch BigBird distributed training on multiple GPUs**
 
 ```
-# For distributed training (using nq-training.jsonl & nq-validation.jsonl) on multiple gpus
+# For distributed training (using nq-training.jsonl & nq-validation.jsonl) on 2 gpus
 python3 -m torch.distributed.launch --nproc_per_node=2 train_nq.py
 ```
 
-You can follow this [notebook](https://colab.research.google.com/github/vasudevgupta7/bigbird/blob/main/notebooks/evaluate_nq.ipynb) for evaluating the fine-tuned model.
+**Flax BigBird distributed training on TPUs/GPUs**
 
-| Checkpoint | [bigbird-roberta-natural-questions](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) |
-|------------|------------------------------------------------------------------------------------------------------------|
+```shell
+# start training
+python3 train_nq_flax.py
+```
+
+You can find my fine-tuned checkpoints on HuggingFace Hub. Refer to following table:
+
+| Checkpoint     |  Description     |
+|----------------|------------------|
+| [`flax-bigbird-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq_flax.py` script |
+| [`bigbird-roberta-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq.py` script |
 
 To see how above checkpoint performs on QA task, checkout this: 
 
