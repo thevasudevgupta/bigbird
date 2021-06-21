@@ -94,7 +94,7 @@ class Args:
 
     save_dir: str = "bigbird-roberta-natural-questions"
     base_dir: str = "training-expt"
-    tr_data_path: str = "data/nq-training.jsonl"
+    tr_data_path: str = "data/nq-validation.jsonl"
     val_data_path: str = "data/nq-validation.jsonl"
 
     def __post_init__(self):
@@ -150,7 +150,7 @@ def get_batched_dataset(dataset, batch_size, seed=None):
 
 
 @partial(jax.pmap, axis_name="batch")
-def train_step(state, step, drp_rng, **model_inputs):
+def train_step(state, drp_rng, **model_inputs):
 
     def loss_fn(params):
         start_labels = model_inputs.pop("start_labels")
@@ -162,7 +162,7 @@ def train_step(state, step, drp_rng, **model_inputs):
         )
         start_logits, end_logits, pooled_logits = outputs
 
-        return calculate_loss_for_nq(
+        return state.loss_fn(
             start_logits,
             start_labels,
             end_logits,
@@ -177,8 +177,7 @@ def train_step(state, step, drp_rng, **model_inputs):
     metrics = jax.lax.pmean({"loss": loss}, axis_name="batch")
     grads = jax.lax.pmean(grads, "batch")
 
-    if step % state.gradient_accumulation_steps == 0:
-        state = state.apply_gradients(grads=grads)
+    state = state.apply_gradients(grads=grads)
     return state, metrics, new_drp_rng
 
 
@@ -193,7 +192,7 @@ def val_step(state, **model_inputs):
     )
     start_logits, end_logits, pooled_logits = outputs
 
-    loss = calculate_loss_for_nq(
+    loss = state.loss_fn(
         start_logits, start_labels, end_logits, end_labels, pooled_logits, pooled_labels
     )
     metrics = jax.lax.pmean({"loss": loss}, axis_name="batch")
@@ -202,27 +201,27 @@ def val_step(state, **model_inputs):
 
 class TrainState(train_state.TrainState):
     gradient_accumulation_steps: int = struct.field(pytree_node=False)
+    loss_fn: Callable = struct.field(pytree_node=False)
 
 
 @dataclass
 class Trainer:
     args: Args
     data_collator: Callable
-    model_save_fn: Callable
     train_step_fn: Callable
     val_step_fn: Callable
+    model_save_fn: Callable
     logger: wandb
-    tr_num_samples: int = None
-    val_num_samples: int = None
     scheduler_fn: Callable = None
 
-    def create_state(self, model, tx, ckpt_dir=None):
+    def create_state(self, model, tx, num_train_steps, ckpt_dir=None):
         params = model.params
         state = TrainState.create(
             apply_fn=model.__call__,
             params=params,
             tx=tx,
             gradient_accumulation_steps=self.args.gradient_accumulation_steps,
+            loss_fn=calculate_loss_for_nq,
         )
         if ckpt_dir is not None:
             params, opt_state, step, args, data_collator = restore_checkpoint(
@@ -232,7 +231,7 @@ class Trainer:
                 "lr": args.lr,
                 "init_lr": args.init_lr,
                 "warmup_steps": args.warmup_steps,
-                "num_train_steps": self.tr_num_samples // args.batch_size,
+                "num_train_steps": num_train_steps,
                 "weight_decay": args.weight_decay,
             }
             tx, lr = build_tx(**tx_args)
@@ -252,7 +251,6 @@ class Trainer:
 
     def train(self, state, tr_dataset, val_dataset):
         args = self.args
-        val_dataloader = get_batched_dataset(val_dataset, args.batch_size)
         total = len(tr_dataset) // args.batch_size
 
         rng = jax.random.PRNGKey(0)
@@ -279,13 +277,14 @@ class Trainer:
                 if i % args.save_steps == 0:
                     self.save_checkpoint(args.save_dir + f"-e{epoch}-s{i}", state=state)
 
-            eval_loss = self.evaluate(state, val_dataloader)
+            eval_loss = self.evaluate(state, val_dataset)
             logging_dict = {"eval_loss": eval_loss.item(), "epoch": epoch}
             self.logger.log(logging_dict, commit=False)
             print(logging_dict)
 
-    def evaluate(self, state, dataloader):
-        total = self.val_num_samples // self.args.batch_size
+    def evaluate(self, state, dataset):
+        dataloader = get_batched_dataset(val_dataset, args.batch_size)
+        total = len(dataset) // self.args.batch_size
         running_loss = jnp.array(0, dtype=jnp.float32)
         i = 0
         for batch in tqdm(dataloader, total=total, desc="Evaluating ... "):
@@ -365,13 +364,15 @@ if __name__ == "__main__":
     tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"]
     val_dataset = load_dataset("json", data_files=args.val_data_path)["train"]
 
+    # drop extra batch for now
+    indices = range(len(tr_dataset) - len(tr_dataset) % args.batch_size)
+    tr_dataset = tr_dataset.shuffle().select(indices)
+    indices = range(len(val_dataset) - len(val_dataset) % args.batch_size)
+    val_dataset = val_dataset.shuffle().select(indices)
+
     if os.environ.get("TRAIN_ON_SMALL", "FALSE") == "TRUE":
-        np.random.seed(0)
-        indices = np.random.randint(0, 298152, size=8000)
-        tr_dataset = tr_dataset.select(indices)
-        np.random.seed(0)
-        indices = np.random.randint(0, 9000, size=1000)
-        val_dataset = val_dataset.select(indices)
+        tr_dataset = tr_dataset.shuffle().select(range(10))
+        val_dataset = val_dataset.shuffle().select(range(10))
 
     print(tr_dataset)
     print(val_dataset)
@@ -397,13 +398,11 @@ if __name__ == "__main__":
         train_step_fn=train_step,
         val_step_fn=val_step,
         logger=logger,
-        tr_num_samples=len(tr_dataset),
-        val_num_samples=len(val_dataset),
         scheduler_fn=lr,
     )
 
     ckpt_dir = None # "training-expt/bigbird-roberta-natural-questions-epoch-0"
-    state = trainer.create_state(model, tx, ckpt_dir=ckpt_dir)
+    state = trainer.create_state(model, tx, num_train_steps=tx_args["num_train_steps"], ckpt_dir=ckpt_dir)
     try:
         trainer.train(state, tr_dataset, val_dataset)
     except KeyboardInterrupt:
