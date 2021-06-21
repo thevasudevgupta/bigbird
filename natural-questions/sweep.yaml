@@ -1,0 +1,18 @@
+program: train_nq_flax.py
+method: random
+parameters:
+        init_lr:
+                distribution: normal
+                mu: 1e-6
+                sigma: 2e-7
+        lr:
+                values: [1e-4, 5e-5, 3e-4, 7e-5]
+        warmup_steps:
+                values: [3000, 700, 2000, 1000]
+        weight_decay:
+                distribution: normal
+                mu: 1e-2
+                sigma: 4e-3
+metric:
+        name: eval_loss
+        goal: minimize

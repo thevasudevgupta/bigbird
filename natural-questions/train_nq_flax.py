@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Callable
 
@@ -79,22 +79,22 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    logging_steps: int = 2000
+    logging_steps: int = 1000
     save_steps: int = 10500
 
     batch_size_per_device: int = 1
-    gradient_accumulation_steps: int = 8
-    max_epochs: int = 5
+    gradient_accumulation_steps: int = 8 # it's not implemented currently
+    max_epochs: int = 3
 
     # tx_args
-    lr: float = 1e-4
+    lr: float = 5e-4
     init_lr: float = 0.0
-    warmup_steps: int = 3000
+    warmup_steps: int = 500
     weight_decay: float = 1e-2
 
     save_dir: str = "bigbird-roberta-natural-questions"
     base_dir: str = "training-expt"
-    tr_data_path: str = "data/nq-validation.jsonl"
+    tr_data_path: str = "data/nq-training.jsonl"
     val_data_path: str = "data/nq-validation.jsonl"
 
     def __post_init__(self):
@@ -267,20 +267,15 @@ class Trainer:
                 if i % args.logging_steps == 0:
                     state_step = jax_utils.unreplicate(state.step)
                     tr_loss = running_loss.item() / i
-
                     lr = self.scheduler_fn(state_step - 1)
-                    logging_dict = dict(step=state_step.item(), tr_loss=tr_loss, lr=lr.item())
 
+                    eval_loss = self.evaluate(state, val_dataset)
+                    logging_dict = dict(step=state_step.item(), eval_loss=eval_loss.item(), tr_loss=tr_loss, lr=lr.item())
                     tqdm.write(str(logging_dict))
                     self.logger.log(logging_dict, commit=True)
 
                 if i % args.save_steps == 0:
                     self.save_checkpoint(args.save_dir + f"-e{epoch}-s{i}", state=state)
-
-            eval_loss = self.evaluate(state, val_dataset)
-            logging_dict = {"eval_loss": eval_loss.item(), "epoch": epoch}
-            self.logger.log(logging_dict, commit=False)
-            print(logging_dict)
 
     def evaluate(self, state, dataset):
         dataloader = get_batched_dataset(val_dataset, args.batch_size)
@@ -359,6 +354,12 @@ def build_tx(lr, init_lr, warmup_steps, num_train_steps, weight_decay):
 
 if __name__ == "__main__":
     args = Args()
+    logger = wandb.init(project="bigbird-natural-questions", config=args.__dict__)
+    wandb_args = dict(logger.config)
+    wandb_args.pop("batch_size")
+    args = replace(args, **wandb_args)
+    base_dir = args.base_dir
+    args = replace(args, base_dir=base_dir+f"-{wandb.run.id}")
     print(args)
 
     tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"]
@@ -371,8 +372,8 @@ if __name__ == "__main__":
     val_dataset = val_dataset.shuffle().select(indices)
 
     if os.environ.get("TRAIN_ON_SMALL", "FALSE") == "TRUE":
-        tr_dataset = tr_dataset.shuffle().select(range(10))
-        val_dataset = val_dataset.shuffle().select(range(10))
+        tr_dataset = tr_dataset.shuffle().select(range(16000))
+        val_dataset = val_dataset.shuffle().select(range(1000))
 
     print(tr_dataset)
     print(val_dataset)
@@ -390,7 +391,6 @@ if __name__ == "__main__":
     }
     tx, lr = build_tx(**tx_args)
 
-    logger = wandb.init(project="bigbird-natural-questions", config=args.__dict__)
     trainer = Trainer(
         args=args,
         data_collator=data_collator,
