@@ -12,8 +12,7 @@ import jax.numpy as jnp
 import joblib
 import optax
 from datasets import load_dataset
-from flax import traverse_util
-from flax import jax_utils
+from flax import traverse_util, struct, jax_utils
 from flax.serialization import from_bytes, to_bytes
 from flax.training import train_state
 from flax.training.common_utils import shard
@@ -26,11 +25,6 @@ from transformers import (
 )
 from transformers.models.big_bird.modeling_flax_big_bird import \
     FlaxBigBirdForQuestionAnsweringModule
-
-##########################################################
-# How can we inherit from HuggingFace Flax Transformers?
-# explore it below 👇👇
-##########################################################
 
 
 class FlaxBigBirdForNaturalQuestionsModule(FlaxBigBirdForQuestionAnsweringModule):
@@ -89,6 +83,7 @@ class Args:
     save_steps: int = 10500
 
     batch_size_per_device: int = 1
+    gradient_accumulation_steps: int = 8
     max_epochs: int = 5
 
     # tx_args
@@ -155,7 +150,7 @@ def get_batched_dataset(dataset, batch_size, seed=None):
 
 
 @partial(jax.pmap, axis_name="batch")
-def train_step(state, drp_rng, **model_inputs):
+def train_step(state, step, drp_rng, **model_inputs):
 
     def loss_fn(params):
         start_labels = model_inputs.pop("start_labels")
@@ -181,7 +176,9 @@ def train_step(state, drp_rng, **model_inputs):
     loss, grads = grad_fn(state.params)
     metrics = jax.lax.pmean({"loss": loss}, axis_name="batch")
     grads = jax.lax.pmean(grads, "batch")
-    state = state.apply_gradients(grads=grads)
+
+    if step % state.gradient_accumulation_steps == 0:
+        state = state.apply_gradients(grads=grads)
     return state, metrics, new_drp_rng
 
 
@@ -203,6 +200,10 @@ def val_step(state, **model_inputs):
     return metrics
 
 
+class TrainState(train_state.TrainState):
+    gradient_accumulation_steps: int = struct.field(pytree_node=False)
+
+
 @dataclass
 class Trainer:
     args: Args
@@ -217,8 +218,11 @@ class Trainer:
 
     def create_state(self, model, tx, ckpt_dir=None):
         params = model.params
-        state = train_state.TrainState.create(
-            apply_fn=model.__call__, params=params, tx=tx
+        state = TrainState.create(
+            apply_fn=model.__call__,
+            params=params,
+            tx=tx,
+            gradient_accumulation_steps=self.args.gradient_accumulation_steps,
         )
         if ckpt_dir is not None:
             params, opt_state, step, args, data_collator = restore_checkpoint(
