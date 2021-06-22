@@ -80,13 +80,13 @@ class Args:
     save_steps: int = 10500
 
     batch_size_per_device: int = 1
-    gradient_accumulation_steps: int = 8 # it's not implemented currently
-    max_epochs: int = 3
+    gradient_accumulation_steps: int = None # it's not implemented currently
+    max_epochs: int = 1
 
     # tx_args
-    lr: float = 5e-4
+    lr: float = 7e-5
     init_lr: float = 0.0
-    warmup_steps: int = 500
+    warmup_steps: int = 8000
     weight_decay: float = 1e-2
 
     save_dir: str = "bigbird-roberta-natural-questions"
@@ -275,7 +275,7 @@ class Trainer:
                     self.save_checkpoint(args.save_dir + f"-e{epoch}-s{i}", state=state)
 
     def evaluate(self, state, dataset):
-        dataloader = get_batched_dataset(val_dataset, args.batch_size)
+        dataloader = get_batched_dataset(dataset, self.args.batch_size)
         total = len(dataset) // self.args.batch_size
         running_loss = jnp.array(0, dtype=jnp.float32)
         i = 0
@@ -292,7 +292,7 @@ class Trainer:
         self.model_save_fn(save_dir, params=state.params)
         with open(os.path.join(save_dir, "opt_state.msgpack"), "wb") as f:
             f.write(to_bytes(state.opt_state))
-        joblib.dump(args, os.path.join(save_dir, "args.joblib"))
+        joblib.dump(self.args, os.path.join(save_dir, "args.joblib"))
         joblib.dump(self.data_collator, os.path.join(save_dir, "data_collator.joblib"))
         with open(os.path.join(save_dir, "training_state.json"), "w") as f:
             json.dump({"step": state.step.item()}, f)

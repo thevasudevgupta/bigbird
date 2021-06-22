@@ -23,8 +23,8 @@ if __name__ == "__main__":
     wandb_args = dict(logger.config)
     wandb_args.pop("batch_size")
     args = replace(args, **wandb_args)
-    base_dir = args.base_dir
-    args = replace(args, base_dir=base_dir+f"-{wandb.run.id}")
+    base_dir = args.base_dir + "-" +  wandb.run.id
+    args = replace(args, base_dir=base_dir)
     print(args)
 
     tr_dataset = load_dataset("json", data_files=args.tr_data_path)["train"]
@@ -36,9 +36,9 @@ if __name__ == "__main__":
     indices = range(len(val_dataset) - len(val_dataset) % args.batch_size)
     val_dataset = val_dataset.shuffle().select(indices)
 
-    if os.environ.get("TRAIN_ON_SMALL", "FALSE") == "TRUE":
-        tr_dataset = tr_dataset.shuffle().select(range(16000))
-        val_dataset = val_dataset.shuffle().select(range(1000))
+    if os.environ.get("TRAIN_ON_SMALL", "false") == "true":
+        tr_dataset = tr_dataset.shuffle().select(range(160000))
+        val_dataset = val_dataset.shuffle().select(range(8000))
 
     print(tr_dataset)
     print(val_dataset)
