@@ -37,7 +37,7 @@ if __name__ == "__main__":
     val_dataset = val_dataset.shuffle().select(indices)
 
     if os.environ.get("TRAIN_ON_SMALL", "false") == "true":
-        tr_dataset = tr_dataset.shuffle().select(range(160000))
+        tr_dataset = tr_dataset.shuffle().select(range(80000))
         val_dataset = val_dataset.shuffle().select(range(8000))
 
     print(tr_dataset)

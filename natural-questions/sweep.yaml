@@ -3,14 +3,10 @@ command:
         - train_nq_flax.py
 method: random
 parameters:
-        init_lr:
-                distribution: normal
-                mu: 2e-6
-                sigma: 1e-7
         lr:
-                values: [1e-4, 5e-5, 7e-5, 3e-5]
+                values: [4e-5, 3e-5]
         warmup_steps:
-                values: [20000, 15000, 10000, 25000]
+                values: [20000, 15000, 10000, 5000]
         weight_decay:
                 distribution: normal
                 mu: 1e-2
