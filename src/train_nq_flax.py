@@ -4,7 +4,7 @@ import wandb
 from dataclasses import replace
 from transformers import BigBirdTokenizerFast
 
-
+import jax
 from flax import jax_utils
 from bigbird_flax import (
     Args,
@@ -18,10 +18,14 @@ from bigbird_flax import (
 
 
 if __name__ == "__main__":
+    print("#################### AVAILABLE DEVICES ####################")
+    print(jax.devices())
+    print("###########################################################")
+
+    # setup for wandb sweep
     args = Args()
     logger = wandb.init(project="bigbird-natural-questions", config=args.__dict__)
-    wandb_args = dict(logger.config)
-    wandb_args.pop("batch_size")
+    wandb_args = dict(logger.config); del wandb_args["batch_size"]
     args = replace(args, **wandb_args)
     base_dir = args.base_dir + "-" +  wandb.run.id
     args = replace(args, base_dir=base_dir)
@@ -66,7 +70,7 @@ if __name__ == "__main__":
         scheduler_fn=lr,
     )
 
-    ckpt_dir = None # "training-expt/bigbird-roberta-natural-questions-epoch-0"
+    ckpt_dir = None
     state = trainer.create_state(model, tx, num_train_steps=tx_args["num_train_steps"], ckpt_dir=ckpt_dir)
     try:
         trainer.train(state, tr_dataset, val_dataset)

@@ -4,9 +4,12 @@ import numpy as np
 from tqdm import tqdm
 
 import jsonlines
-from params import CATEGORY_MAPPING, DOC_STRIDE, MAX_LENGTH, SEED
 
-PROCESS_TRAIN = eval(os.environ.pop("PROCESS_TRAIN", "False"))
+DOC_STRIDE = 2048
+MAX_LENGTH = 4096
+SEED = 42
+PROCESS_TRAIN = os.environ.pop("PROCESS_TRAIN", "false")
+CATEGORY_MAPPING = {"null": 0, "short": 1, "long": 2, "yes": 3, "no": 4}
 
 
 def _get_single_answer(example):
@@ -284,16 +287,7 @@ def prepare_inputs(
         max_length=max_length,
         assertion=assertion,
     )
-    #
-    # labels = example['labels']
-    # print(labels)
-    # for ids, start, end, cat in zip(example['input_ids'], labels['start_token'], labels['end_token'], labels['category']):
-    #     if len(ids[start: 1+end]) > 0:
-    #         end_idx = ids.index(tokenizer.sep_token_id)
-    #         print(tokenizer.decode(ids[: end_idx]))
-    #         if start != -100 and end != -100:
-    #             print(tokenizer.decode(ids[start: 1+end]), end="\n\n")
-    #
+
     return example
 
 
@@ -309,13 +303,6 @@ def save_to_disk(hf_data, file_name):
             ):
                 if start == -1 and end == -1:
                     continue  # leave waste samples with no answer
-                #
-                # print(tokenizer.decode(ids[:ids.index(tokenizer.sep_token_id)]))
-                # print(start, end, cat)
-                # if start != -100 and end != -100:
-                #     print(tokenizer.decode(ids[start: end+1]))
-                # print()
-                #
                 if cat == "null" and np.random.rand() < 0.6:
                     continue  # removing 50 % samples
                 writer.write(
@@ -326,7 +313,6 @@ def save_to_disk(hf_data, file_name):
                         "category": CATEGORY_MAPPING[cat],
                     }
                 )
-    return 1
 
 
 if __name__ == "__main__":
@@ -337,10 +323,9 @@ if __name__ == "__main__":
     data = load_dataset("natural_questions")
     tokenizer = BigBirdTokenizer.from_pretrained("google/bigbird-roberta-base")
 
-    data = data["train" if PROCESS_TRAIN else "validation"]
-    # data = data.select(range(100))
+    data = data["train" if PROCESS_TRAIN == "true" else "validation"]
 
-    cache_file_name = "data/nq-training" if PROCESS_TRAIN else "data/nq-validation"
+    cache_file_name = "data/nq-training" if PROCESS_TRAIN == "true" else "data/nq-validation"
     fn_kwargs = dict(
         tokenizer=tokenizer,
         doc_stride=DOC_STRIDE,

@@ -2,7 +2,7 @@
 
 This repositary is tracking all my work related to porting [**Google's BigBird**](https://github.com/google-research/bigbird) to **🤗 Transformers**. I also trained 🤗's `BigBirdModel` & `FlaxBigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [**Big Bird: Transformers for Longer Sequences**](https://arxiv.org/abs/2007.14062). This repositary hosts those scripts as well!!
 
-Do check the following notebooks for diving deeper into using 🤗 BigBird:
+Checkout following notebooks for diving deeper into using 🤗 BigBird:
 
 | Description   | Notebook |
 |---------------|----------|
@@ -34,18 +34,18 @@ git clone https://github.com/vasudevgupta7/bigbird
 # install requirements
 pip3 install -r requirements.txt
 
-# switch to natural-questions specific directory
-cd natural-questions
+# switch to code directory
+cd src
 ```
 
 Now that your system is ready, let's preprocess & prepare the dataset for training. Just run following commands:
 
 ```shell
 # this will download ~ 100 GB dataset from 🤗 Hub & prepare training data in `data/nq-training.jsonl`
-PROCESS_TRAIN=True python3 prepare_nq.py
+PROCESS_TRAIN=true python3 prepare_natural_questions.py
 
 # for preparing validation data in `data/nq-validation.jsonl`
-PROCESS_TRAIN=False python3 prepare_nq.py
+PROCESS_TRAIN=false python3 prepare_natural_questions.py
 ```
 
 Above commands will first download dataset from 🤗 Hub & then will prepare it for training. Remember this will download ~ 100 GB of dataset, so you need to have good internet connection & enough space (~ 250 GB free space). Preparing dataset will take ~ 3 hours.
@@ -59,7 +59,7 @@ Now that you have prepared the dataset, let's start training. You have 2 options
 
 ```
 # For distributed training (using nq-training.jsonl & nq-validation.jsonl) on 2 gpus
-python3 -m torch.distributed.launch --nproc_per_node=2 train_nq.py
+python3 -m torch.distributed.launch --nproc_per_node=2 train_nq_torch.py
 ```
 
 **Flax BigBird distributed training on TPUs/GPUs**
@@ -67,6 +67,10 @@ python3 -m torch.distributed.launch --nproc_per_node=2 train_nq.py
 ```shell
 # start training
 python3 train_nq_flax.py
+
+# For hparams tuning, try wandb sweep (`random search` is happening by default):
+wandb sweep sweep_flax.yaml
+wandb agent <agent-id-created-by-above-CMD>
 ```
 
 You can find my fine-tuned checkpoints on HuggingFace Hub. Refer to following table:
@@ -74,7 +78,7 @@ You can find my fine-tuned checkpoints on HuggingFace Hub. Refer to following ta
 | Checkpoint     |  Description     |
 |----------------|------------------|
 | [`flax-bigbird-natural-questions`](https://huggingface.co/vasudevgupta/flax-bigbird-natural-questions) | Obtained by running `train_nq_flax.py` script |
-| [`bigbird-roberta-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq.py` script |
+| [`bigbird-roberta-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq_torch.py` script |
 
 To see how above checkpoint performs on QA task, checkout this: 
 

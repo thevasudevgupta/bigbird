@@ -102,10 +102,6 @@ class Args:
         self.save_dir = os.path.join(self.base_dir, self.save_dir)
         self.batch_size = self.batch_size_per_device * jax.device_count()
 
-        print("#################### AVAILABLE DEVICES ####################")
-        print(jax.devices())
-        print("###########################################################")
-
 
 @dataclass
 class DataCollator:

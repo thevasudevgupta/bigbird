@@ -1,5 +1,3 @@
-# TRAIN_ON_SMALL=True python3 -m torch.distributed.launch --nproc_per_node=2 train_nq.py
-
 import os
 
 import numpy as np
@@ -8,17 +6,6 @@ import torch.nn as nn
 import wandb
 from datasets import load_dataset
 
-import torch_xla.distributed.xla_multiprocessing as xmp
-from params import (
-    FP16,
-    GROUP_BY_LENGTH,
-    LEARNING_RATE,
-    MAX_EPOCHS,
-    MODEL_ID,
-    SCHEDULER,
-    SEED,
-    WARMUP_STEPS,
-)
 from transformers import (
     BigBirdForQuestionAnswering,
     BigBirdTokenizer,
@@ -26,12 +13,19 @@ from transformers import (
     TrainingArguments,
 )
 
-os.environ["WANDB_WATCH"] = "false"
-os.environ["WANDB_PROJECT"] = "bigbird-tpu"
-TRAIN_ON_SMALL = eval(os.environ.pop("TRAIN_ON_SMALL", "False"))
-
-
+TRAIN_ON_SMALL = os.environ.pop("TRAIN_ON_SMALL", "false")
 RESUME_TRAINING = None
+
+os.environ["WANDB_WATCH"] = "false"
+os.environ["WANDB_PROJECT"] = "bigbird-natural-questions"
+SEED = 42
+GROUP_BY_LENGTH = True
+LEARNING_RATE = 1.0e-4
+WARMUP_STEPS = 100
+MAX_EPOCHS = 3
+FP16 = False
+SCHEDULER = "linear"
+MODEL_ID = "google/bigbird-roberta-base"
 
 
 def collate_fn(features, pad_id=0, threshold=1024):
@@ -40,11 +34,10 @@ def collate_fn(features, pad_id=0, threshold=1024):
             ls.append(pad_id)
         return ls
 
-    # maxlen = max([len(x['input_ids']) for x in features])
-    maxlen = 4096  # TPU static-padding
+    maxlen = max([len(x["input_ids"]) for x in features])
     # avoid attention_type switching
-    # if maxlen < threshold:
-    #     maxlen = threshold
+    if maxlen < threshold:
+        maxlen = threshold
 
     # dynamic padding
     input_ids = [pad_elems(x["input_ids"], pad_id, maxlen) for x in features]
@@ -113,14 +106,13 @@ class BigBirdForNaturalQuestions(BigBirdForQuestionAnswering):
         }
 
 
-def main():
-
+if __name__ == "__main__":
     # "nq-training.jsonl" & "nq-validation.jsonl" are obtained from running `prepare_nq.py`
-    tr_dataset = load_dataset("json", data_files="data/nq-validation.jsonl")["train"]
+    tr_dataset = load_dataset("json", data_files="data/nq-training.jsonl")["train"]
     val_dataset = load_dataset("json", data_files="data/nq-validation.jsonl")["train"]
 
-    if TRAIN_ON_SMALL:
-        # this will run for ~1 day
+    if TRAIN_ON_SMALL == "true":
+        # this will run for ~12 hrs on 2 K80 GPU
         np.random.seed(SEED)
         indices = np.random.randint(0, 298152, size=8000)
         tr_dataset = tr_dataset.select(indices)
@@ -132,7 +124,7 @@ def main():
 
     tokenizer = BigBirdTokenizer.from_pretrained(MODEL_ID)
     model = BigBirdForNaturalQuestions.from_pretrained(
-        MODEL_ID, gradient_checkpointing=False
+        MODEL_ID, gradient_checkpointing=True
     )
 
     args = TrainingArguments(
@@ -142,17 +134,16 @@ def main():
         do_eval=True,
         evaluation_strategy="epoch",
         # eval_steps=4000,
-        per_device_train_batch_size=1,
-        per_device_eval_batch_size=1,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=4,
         gradient_accumulation_steps=4,
-        # group_by_length=GROUP_BY_LENGTH,
+        group_by_length=GROUP_BY_LENGTH,
         learning_rate=LEARNING_RATE,
         warmup_steps=WARMUP_STEPS,
         lr_scheduler_type=SCHEDULER,
         num_train_epochs=MAX_EPOCHS,
-        tpu_num_cores=8,
-        logging_strategy="no",
-        # logging_steps=500,
+        logging_strategy="steps",
+        logging_steps=10,
         save_strategy="steps",
         save_steps=250,
         run_name="bigbird-nq-complete-tuning",
@@ -183,12 +174,3 @@ def main():
     except KeyboardInterrupt:
         trainer.save_model("interrupted-natural-questions")
     wandb.finish()
-
-
-def _mp_fn(index):
-    main()
-
-
-if __name__ == "__main__":
-    # xmp.spawn(_mp_fn, args=()) # not working right now :(
-    main()
