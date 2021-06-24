@@ -76,18 +76,21 @@ def calculate_loss_for_nq(
 @dataclass
 class Args:
     model_id: str = "google/bigbird-roberta-base"
-    logging_steps: int = 1000
+    logging_steps: int = 3000
     save_steps: int = 10500
+
+    block_size: int = 128
+    num_random_blocks: int = 3
 
     batch_size_per_device: int = 1
     gradient_accumulation_steps: int = None # it's not implemented currently
-    max_epochs: int = 2
+    max_epochs: int = 5
 
     # tx_args
     lr: float = 3e-5
     init_lr: float = 0.0
     warmup_steps: int = 20000
-    weight_decay: float = 1e-2
+    weight_decay: float = 0.0095
 
     save_dir: str = "bigbird-roberta-natural-questions"
     base_dir: str = "training-expt"

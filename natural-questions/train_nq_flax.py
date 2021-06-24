@@ -43,7 +43,7 @@ if __name__ == "__main__":
     print(tr_dataset)
     print(val_dataset)
 
-    model = FlaxBigBirdForNaturalQuestions.from_pretrained(args.model_id)
+    model = FlaxBigBirdForNaturalQuestions.from_pretrained(args.model_id, block_size=args.block_size, num_random_blocks=args.num_random_blocks)
     tokenizer = BigBirdTokenizerFast.from_pretrained(args.model_id)
     data_collator = DataCollator(pad_id=tokenizer.pad_token_id, max_length=4096)
 
