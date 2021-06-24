@@ -73,7 +73,7 @@ You can find my fine-tuned checkpoints on HuggingFace Hub. Refer to following ta
 
 | Checkpoint     |  Description     |
 |----------------|------------------|
-| [`flax-bigbird-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq_flax.py` script |
+| [`flax-bigbird-natural-questions`](https://huggingface.co/vasudevgupta/flax-bigbird-natural-questions) | Obtained by running `train_nq_flax.py` script |
 | [`bigbird-roberta-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq.py` script |
 
 To see how above checkpoint performs on QA task, checkout this: 
