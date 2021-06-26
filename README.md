@@ -16,7 +16,7 @@ Checkout following notebooks for diving deeper into using 🤗 BigBird:
 
 | Description                | Dated                | Link                |
 |----------------------------|----------------------|---------------------|
-| Script for training `FlaxBigBird` (with QA heads) on **natural-questions** | In progress | [PR #12233](https://github.com/huggingface/transformers/pull/12233) |
+| Script for training `FlaxBigBird` (with QA heads) on **natural-questions** | June 25, 2021 | [PR #12233](https://github.com/huggingface/transformers/pull/12233) |
 | Added **Flax/Jax** `BigBird-RoBERTa` to **🤗Transformers** | June 15, 2021  | [PR #11967](https://github.com/huggingface/transformers/pull/11967) |                                             
 | Added **PyTorch** `BigBird-Pegasus` to **🤗Transformers**  | May 7, 2021    | [PR #10991](https://github.com/huggingface/transformers/pull/10991) |
 | Published blog post @ **🤗Blog**                          | March 31, 2021 | [Link](https://huggingface.co/blog/big-bird)                        |
