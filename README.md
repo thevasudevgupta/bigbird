@@ -2,6 +2,8 @@
 
 This repositary is tracking all my work related to porting [**Google's BigBird**](https://github.com/google-research/bigbird) to **🤗 Transformers**. I also trained 🤗's `BigBirdModel` & `FlaxBigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [**Big Bird: Transformers for Longer Sequences**](https://arxiv.org/abs/2007.14062). This repositary hosts those scripts as well!!
 
+You can find this model deployed in HuggingFace spaces: https://huggingface.co/spaces/vasudevgupta/BIGBIRD_NATURAL_QUESTIONS. Feel free to ask some random questions ...
+
 Checkout following notebooks for diving deeper into using 🤗 BigBird:
 
 | Description   | Notebook |
