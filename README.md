@@ -1,6 +1,6 @@
 # BigBird
 
-This repositary is tracking all my work related to porting [**Google's BigBird**](https://github.com/google-research/bigbird) to **🤗 Transformers**. I also trained 🤗's `BigBirdModel` & `FlaxBigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [**Big Bird: Transformers for Longer Sequences**](https://arxiv.org/abs/2007.14062). This repositary hosts those scripts as well!!
+This repository tracks all my work related to porting [**Google's BigBird**](https://github.com/google-research/bigbird) to **🤗 Transformers**. I also trained 🤗's `BigBirdModel` & `FlaxBigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [**Big Bird: Transformers for Longer Sequences**](https://arxiv.org/abs/2007.14062). This repository hosts those scripts as well.
 
 You can find the quick demo in 🤗spaces: https://hf.co/spaces/vasudevgupta/BIGBIRD_NATURAL_QUESTIONS
 
@@ -27,10 +27,10 @@ Checkout following notebooks for diving deeper into using 🤗 BigBird:
 
 ## Training BigBird
 
-I have trained BigBird on [`natural-questions`](https://huggingface.co/datasets/natural_questions) dataset. This dataset takes around 100 GB space on disk. Before diving deeper into scripts, let's setup the system using following commands:
+I have trained BigBird on [`natural-questions`](https://huggingface.co/datasets/natural_questions) dataset. This dataset takes around 100 GB of space on a disk. Before diving deeper into scripts, let's set up the system using the following commands:
 
 ```shell
-# clone my repositary
+# clone my repository
 git clone https://github.com/vasudevgupta7/bigbird
 
 # install requirements
@@ -40,7 +40,7 @@ pip3 install -r requirements.txt
 cd src
 ```
 
-Now that your system is ready, let's preprocess & prepare the dataset for training. Just run following commands:
+Now that your system is ready let's preprocess & prepare the dataset for training. Just run the following commands:
 
 ```shell
 # this will download ~ 100 GB dataset from 🤗 Hub & prepare training data in `data/nq-training.jsonl`
@@ -50,9 +50,9 @@ PROCESS_TRAIN=true python3 prepare_natural_questions.py
 PROCESS_TRAIN=false python3 prepare_natural_questions.py
 ```
 
-Above commands will first download dataset from 🤗 Hub & then will prepare it for training. Remember this will download ~ 100 GB of dataset, so you need to have good internet connection & enough space (~ 250 GB free space). Preparing dataset will take ~ 3 hours.
+The above commands will first download the dataset from 🤗 Hub & then will prepare it for training. Remember this will download ~ 100 GB of the dataset, so you need to have a good internet connection & enough space (~ 250 GB free space). Preparing the dataset will take ~ 3 hours.
 
-Now that you have prepared the dataset, let's start training. You have 2 options here:
+Now that you have prepared the dataset let's start training. You have two options here:
 
 1. Train PyTorch version of BigBird with 🤗 Trainer
 2. Train FlaxBigBird with custom training loop
@@ -75,14 +75,14 @@ wandb sweep sweep_flax.yaml
 wandb agent <agent-id-created-by-above-CMD>
 ```
 
-You can find my fine-tuned checkpoints on HuggingFace Hub. Refer to following table:
+You can find my fine-tuned checkpoints on HuggingFace Hub. Refer to the following table:
 
 | Checkpoint     |  Description     |
 |----------------|------------------|
 | [`flax-bigbird-natural-questions`](https://huggingface.co/vasudevgupta/flax-bigbird-natural-questions) | Obtained by running `train_nq_flax.py` script |
 | [`bigbird-roberta-natural-questions`](https://huggingface.co/vasudevgupta/bigbird-roberta-natural-questions) | Obtained by running `train_nq_torch.py` script |
 
-To see how above checkpoint performs on QA task, checkout this: 
+To see how the above checkpoint performs on the QA task, check out this: 
 
 ![](assets/infer-bigbird-nq.png)
 
