@@ -39,6 +39,9 @@ pip3 install -r requirements.txt
 
 # switch to code directory
 cd src
+
+# create data directory for preparing natural questions
+mkdir -p data
 ```
 
 Now that your system is ready let's preprocess & prepare the dataset for training. Just run the following commands:
