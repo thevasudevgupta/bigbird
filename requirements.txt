@@ -1,4 +1,4 @@
-git+https://github.com/huggingface/transformers@master
+transformers
 datasets
 sentencepiece
 wandb
@@ -8,3 +8,4 @@ flax
 # jax
 # jaxlib
 apache_beam
+jsonline
