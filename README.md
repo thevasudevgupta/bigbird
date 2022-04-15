@@ -34,6 +34,7 @@ I have trained BigBird on [`natural-questions`](https://huggingface.co/datasets/
 git clone https://github.com/vasudevgupta7/bigbird
 
 # install requirements
+cd bigbird
 pip3 install -r requirements.txt
 
 # switch to code directory
