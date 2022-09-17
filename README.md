@@ -1,5 +1,9 @@
 # BigBird
 
+<p>
+<a href="https://console.tiyaro.ai/explore/vasudevgupta-bigbird-roberta-natural-questions"> <img src="https://tiyaro-public-docs.s3.us-west-2.amazonaws.com/assets/try_on_tiyaro_badge.svg"></a>
+</p>
+
 This repository tracks all my work related to porting [**Google's BigBird**](https://github.com/google-research/bigbird) to **🤗 Transformers**. I also trained 🤗's `BigBirdModel` & `FlaxBigBirdModel` (with suitable heads) on some of datasets mentioned in the paper: [**Big Bird: Transformers for Longer Sequences**](https://arxiv.org/abs/2007.14062). This repository hosts those scripts as well.
 
 You can find the quick demo in 🤗spaces: https://hf.co/spaces/vasudevgupta/BIGBIRD_NATURAL_QUESTIONS
